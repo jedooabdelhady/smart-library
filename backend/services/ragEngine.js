@@ -391,7 +391,7 @@ class RAGEngine {
     });
 
     // ملاحظة في الأسفل
-    answer += `\n> 💡 *لتفعيل الإجابات التفسيرية المنسّقة، أضف مفتاح OpenAI في إعدادات الخادم.*`;
+    answer += `\n> 💡 *هذه نتائج البحث المباشر — المساعد الذكي سيصيغ الإجابة قريباً.*`;
 
     const uniqueSources = unique.map(c => ({ book: c.book, page: c.page, author: c.author }));
 
