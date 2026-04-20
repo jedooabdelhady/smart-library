@@ -1,9 +1,12 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-const pool = mysql.createPool({
+// TiDB Cloud requires SSL — detect if we're connecting to TiDB
+const isTiDB = (process.env.DB_HOST || '').includes('tidbcloud.com');
+
+const poolConfig = {
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
+  port: parseInt(process.env.DB_PORT) || (isTiDB ? 4000 : 3306),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'smart_library',
@@ -11,23 +14,30 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4',
-});
+  // SSL required for TiDB Cloud
+  ...(isTiDB && {
+    ssl: { rejectUnauthorized: true },
+  }),
+};
+
+const pool = mysql.createPool(poolConfig);
 
 // Initialize database and tables
 const initDatabase = async () => {
   try {
-    // Create database if not exists
-    const tempConn = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-    });
-
-    await tempConn.execute(
-      `CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'smart_library'}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
-    await tempConn.end();
+    // For TiDB Cloud, database already exists — skip CREATE DATABASE
+    if (!isTiDB) {
+      const tempConn = await mysql.createConnection({
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT) || 3306,
+        user: process.env.DB_USER || 'root',
+        password: process.env.DB_PASSWORD || '',
+      });
+      await tempConn.execute(
+        `CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'smart_library'}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      );
+      await tempConn.end();
+    }
 
     // Create tables
     const conn = await pool.getConnection();
@@ -77,9 +87,10 @@ const initDatabase = async () => {
         book_id INT NOT NULL,
         chunk_index INT NOT NULL,
         content LONGTEXT,
+        content_clean MEDIUMTEXT,
         page_start INT,
         page_end INT,
-        vector_id VARCHAR(100),
+        embedding_id VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
         INDEX idx_book_chunk (book_id, chunk_index)

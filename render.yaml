@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: smart-library-backend
+    env: node
+    region: frankfurt
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build && cd ../backend && npm install
+    startCommand: node backend/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_HOST
+        value: gateway01.eu-central-1.prod.aws.tidbcloud.com
+      - key: DB_PORT
+        value: "4000"
+      - key: DB_USER
+        value: 2GnqtFmAMAVXMK6.root
+      - key: DB_PASSWORD
+        value: m4gccsUZ0QW5ATbc
+      - key: DB_NAME
+        value: smart_library
+      - key: JWT_SECRET
+        value: smart-library-secret-2024-prod-secure
+      - key: OPENAI_API_KEY
+        value: ""
