@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#1a1a4e" />
+    <meta name="description" content="المكتبة الدينية الذكية - منصة البحث والمعرفة الدينية" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              navy: { DEFAULT: '#1a1a4e', light: '#2d2d7a', dark: '#0f0f33' },
+              gold: { DEFAULT: '#c9a84c', light: '#e8d48b', dark: '#a07e2e' },
+              beige: { DEFAULT: '#f5f0e8', dark: '#e8dcc8' },
+              cream: '#faf8f3',
+            },
+            fontFamily: {
+              cairo: ['Cairo', 'sans-serif'],
+              amiri: ['Amiri', 'serif'],
+              tajawal: ['Tajawal', 'sans-serif'],
+            },
+          },
+        },
+      }
+    </script>
+    <title>المكتبة الدينية الذكية</title>
+  </head>
+  <body>
+    <noscript>يجب تفعيل جافاسكربت لتشغيل هذا التطبيق</noscript>
+    <div id="root"></div>
+  </body>
+</html>

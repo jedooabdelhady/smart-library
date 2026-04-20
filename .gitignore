@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Environment variables (NEVER upload these)
+.env
+.env.local
+.env.production
+backend/.env
+
+# Build output
+frontend/build/
+
+# Logs
+*.log
+backend/backend.log
+
+# Database exports (imported separately to Railway)
+*.sql
+*.sql.gz
+
+# Uploaded files (large binary files)
+backend/uploads/*.pdf
+backend/uploads/*.epub
+backend/uploads/*.docx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
