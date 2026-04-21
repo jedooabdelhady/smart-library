@@ -97,10 +97,12 @@ const AdminDashboard = () => {
     if (!window.confirm('هل أنت متأكد من حذف هذا الكتاب؟')) return;
     try {
       await deleteBook(bookId);
+      await loadData();
+      alert('تم حذف الكتاب بنجاح');
     } catch (err) {
-      // Demo: remove locally
+      console.error('Delete error:', err);
+      alert('حدث خطأ أثناء محاولة حذف الكتاب');
     }
-    setBooks(prev => prev.filter(b => b.id !== bookId));
   };
 
   const handleDrag = (e) => {

@@ -182,18 +182,17 @@ router.delete('/books/:id', async (req, res) => {
     await vectorStore.deleteBookChunks(bookId);
 
     // Delete from database (cascades to pages and chunks)
-    try {
-      const [book] = await pool.execute('SELECT file_path FROM books WHERE id = ?', [bookId]);
-      await pool.execute('DELETE FROM books WHERE id = ?', [bookId]);
+    const [book] = await pool.execute('SELECT file_path FROM books WHERE id = ?', [bookId]);
+    await pool.execute('DELETE FROM books WHERE id = ?', [bookId]);
 
-      // Delete physical file
-      if (book[0]?.file_path && fs.existsSync(book[0].file_path)) {
-        fs.unlinkSync(book[0].file_path);
-      }
-    } catch (e) {}
+    // Delete physical file
+    if (book[0]?.file_path && fs.existsSync(book[0].file_path)) {
+      fs.unlinkSync(book[0].file_path);
+    }
 
     res.json({ success: true, message: 'تم حذف الكتاب بنجاح' });
   } catch (error) {
+    console.error('Delete error:', error);
     res.status(500).json({ error: error.message });
   }
 });
