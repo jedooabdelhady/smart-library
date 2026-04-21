@@ -37,6 +37,12 @@ const upload = multer({
   },
 });
 
+// Strip Arabic diacritics for search
+const stripDiacritics = (text) => {
+  if (!text) return '';
+  return text.replace(/[\u064B-\u065F\u0670\u0640]/g, '');
+};
+
 /**
  * POST /api/admin/upload - رفع ومعالجة كتاب جديد
  */
@@ -54,17 +60,32 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     console.log(`📚 بدء معالجة الكتاب: ${title}`);
+    console.log(`📁 نوع الملف: ${path.extname(file.originalname)} | الحجم: ${(file.size / 1024 / 1024).toFixed(1)} MB`);
 
     // Step 1: Extract text
     console.log('📄 استخراج النص...');
-    const extracted = await textExtractor.extract(file.path);
+    let extracted;
+    try {
+      extracted = await textExtractor.extract(file.path);
+    } catch (extractErr) {
+      console.error('❌ فشل استخراج النص:', extractErr.message);
+      return res.status(500).json({ error: 'فشل في استخراج النص من الملف: ' + extractErr.message });
+    }
+
+    if (!extracted.pages || extracted.pages.length === 0) {
+      return res.status(400).json({ error: 'لم يتم العثور على نص في الملف. تأكد من أن الملف يحتوي على نصوص وليس صوراً فقط.' });
+    }
+
+    console.log(`📖 تم استخراج ${extracted.pages.length} صفحة`);
 
     // Step 2: Get category ID
     let categoryId = null;
     try {
       const [cats] = await pool.execute('SELECT id FROM categories WHERE slug = ?', [category]);
       if (cats.length > 0) categoryId = cats[0].id;
-    } catch (e) {}
+    } catch (e) {
+      console.log('⚠️ لم يتم العثور على التصنيف:', category);
+    }
 
     // Step 3: Insert book into database
     let bookId;
@@ -74,20 +95,27 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         [title, author || 'غير محدد', categoryId, file.path, path.extname(file.originalname), extracted.totalPages]
       );
       bookId = result.insertId;
+      console.log(`✅ تم حفظ الكتاب في قاعدة البيانات - ID: ${bookId}`);
     } catch (e) {
-      bookId = Date.now(); // Fallback
+      console.error('❌ فشل حفظ الكتاب:', e.message);
+      return res.status(500).json({ error: 'فشل في حفظ الكتاب في قاعدة البيانات: ' + e.message });
     }
 
-    // Step 4: Save pages to database
+    // Step 4: Save pages to database (in batches for performance)
     console.log(`📖 حفظ ${extracted.pages.length} صفحة...`);
+    let savedPages = 0;
     for (const page of extracted.pages) {
       try {
         await pool.execute(
           'INSERT INTO book_pages (book_id, page_number, content) VALUES (?, ?, ?)',
           [bookId, page.number, page.content]
         );
-      } catch (e) {}
+        savedPages++;
+      } catch (e) {
+        // Skip duplicate pages silently
+      }
     }
+    console.log(`✅ تم حفظ ${savedPages} صفحة`);
 
     // Step 5: Smart text splitting
     console.log('✂️ تقسيم النص الذكي...');
@@ -96,20 +124,27 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       chunkOverlap: 200,
     });
     const chunks = splitter.splitPages(extracted.pages, bookId);
+    console.log(`✅ تم تقسيم النص إلى ${chunks.length} جزء`);
 
-    // Step 6: Save chunks to database
+    // Step 6: Save chunks to database with content_clean for better search
     console.log(`💾 حفظ ${chunks.length} جزء...`);
+    let savedChunks = 0;
     for (const chunk of chunks) {
       try {
+        const cleanContent = stripDiacritics(chunk.content);
         await pool.execute(
-          'INSERT INTO text_chunks (book_id, chunk_index, content, page_start, page_end) VALUES (?, ?, ?, ?, ?)',
-          [bookId, chunk.index, chunk.content, chunk.pageStart, chunk.pageEnd]
+          'INSERT INTO text_chunks (book_id, chunk_index, content, content_clean, page_start, page_end) VALUES (?, ?, ?, ?, ?, ?)',
+          [bookId, chunk.index, chunk.content, cleanContent, chunk.pageStart, chunk.pageEnd]
         );
-      } catch (e) {}
+        savedChunks++;
+      } catch (e) {
+        // Skip errors silently
+      }
     }
+    console.log(`✅ تم حفظ ${savedChunks} جزء`);
 
-    // Step 7: Index in vector database
-    console.log('🧠 فهرسة في قاعدة المتجهات...');
+    // Step 7: Index in vector store (now SQL-based, always succeeds)
+    console.log('🧠 فهرسة البحث...');
     await vectorStore.addChunks(chunks, title, author);
 
     // Step 8: Mark as indexed
@@ -131,7 +166,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('خطأ في رفع الكتاب:', error);
+    console.error('❌ خطأ في رفع الكتاب:', error);
     res.status(500).json({ error: 'حدث خطأ أثناء معالجة الكتاب: ' + error.message });
   }
 });

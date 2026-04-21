@@ -13,7 +13,7 @@ const MainLayout = () => {
   const [currentPage, setCurrentPage] = useState('home');
   const [selectedBook, setSelectedBook] = useState(null);
   const [chatExpanded, setChatExpanded] = useState(true);
-  const [books, setBooks] = useState(libraryBooks);
+  const [books, setBooks] = useState([]);
 
   // Mobile overlay state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);

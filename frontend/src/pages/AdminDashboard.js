@@ -84,25 +84,12 @@ const AdminDashboard = () => {
       loadData();
     } catch (err) {
       clearInterval(progressInterval);
+      setUploadProgress(0);
       setUploadStatus('error');
-      // Demo: add to local state
-      const newBook = {
-        id: Date.now(),
-        title: bookTitle,
-        author: bookAuthor,
-        category: bookCategory,
-        pages_count: Math.floor(Math.random() * 500) + 50,
-        indexed: false,
-      };
-      setBooks(prev => [...prev, newBook]);
-      setUploadProgress(100);
-      setUploadStatus('success');
-      setBookTitle('');
-      setBookAuthor('');
-      setBookFile(null);
+      console.error('Upload error:', err.response?.data?.error || err.message);
     } finally {
       setUploading(false);
-      setTimeout(() => setUploadStatus(null), 3000);
+      setTimeout(() => setUploadStatus(null), 5000);
     }
   };
 
@@ -233,7 +220,7 @@ const AdminDashboard = () => {
                 <input
                   id="fileInput"
                   type="file"
-                  accept=".pdf,.doc,.docx"
+                  accept=".pdf,.doc,.docx,.epub"
                   onChange={(e) => setBookFile(e.target.files[0])}
                   className="hidden"
                 />
@@ -249,7 +236,7 @@ const AdminDashboard = () => {
                   <div>
                     <FiUpload className="mx-auto mb-2 text-navy/30" size={32} />
                     <p className="text-navy/40 text-sm">اسحب الملف هنا أو انقر للاختيار</p>
-                    <p className="text-navy/20 text-xs mt-1">PDF, DOC, DOCX</p>
+                    <p className="text-navy/20 text-xs mt-1">PDF, DOC, DOCX, EPUB</p>
                   </div>
                 )}
               </div>

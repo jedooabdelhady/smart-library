@@ -1,126 +1,102 @@
-const { ChromaClient } = require('chromadb');
-const { v4: uuidv4 } = require('uuid');
+const { pool } = require('../config/database');
 require('dotenv').config();
 
 /**
- * إدارة قاعدة البيانات المتجهية (ChromaDB)
+ * إدارة البحث النصي في قاعدة البيانات (بديل عن ChromaDB)
+ * يعمل مباشرة مع TiDB/MySQL بدون خدمات خارجية
  */
 class VectorStore {
   constructor() {
-    this.client = null;
-    this.collection = null;
-    this.collectionName = 'islamic_library';
     this.initialized = false;
   }
 
   async initialize() {
     try {
-      this.client = new ChromaClient({
-        path: process.env.CHROMA_URL || 'http://localhost:8000',
-      });
-
-      // Get or create collection
-      this.collection = await this.client.getOrCreateCollection({
-        name: this.collectionName,
-        metadata: {
-          description: 'المكتبة الدينية الذكية - فهرس الكتب',
-          'hnsw:space': 'cosine',
-        },
-      });
-
+      // Test database connection
+      const conn = await pool.getConnection();
+      conn.release();
       this.initialized = true;
-      console.log('✅ قاعدة المتجهات جاهزة');
+      console.log('✅ قاعدة البحث النصي جاهزة (SQL mode)');
     } catch (error) {
-      console.error('⚠️ لم يتم الاتصال بـ ChromaDB:', error.message);
-      console.log('⚠️ سيعمل النظام بوضع البحث النصي البديل');
+      console.error('⚠️ خطأ في الاتصال بقاعدة البيانات:', error.message);
       this.initialized = false;
     }
   }
 
   /**
-   * إضافة أجزاء نص إلى قاعدة المتجهات
+   * إضافة أجزاء نص إلى قاعدة البيانات (بدلاً من ChromaDB)
+   * يتم الحفظ في جدول text_chunks مباشرة
    */
   async addChunks(chunks, bookTitle, bookAuthor) {
-    if (!this.initialized) {
-      console.log('⚠️ ChromaDB غير متصل - تخطي الفهرسة المتجهية');
-      return chunks.map((c, i) => ({ ...c, vectorId: `local_${i}` }));
-    }
-
-    try {
-      const ids = [];
-      const documents = [];
-      const metadatas = [];
-
-      for (const chunk of chunks) {
-        const id = uuidv4();
-        ids.push(id);
-        documents.push(chunk.content);
-        metadatas.push({
-          bookId: String(chunk.bookId || ''),
-          bookTitle: bookTitle || '',
-          bookAuthor: bookAuthor || '',
-          pageStart: String(chunk.pageStart || chunk.pageEstimate || ''),
-          pageEnd: String(chunk.pageEnd || chunk.pageEstimate || ''),
-          chunkIndex: String(chunk.index || 0),
-          hasQuranVerse: String(chunk.metadata?.hasQuranVerse || false),
-          hasHadith: String(chunk.metadata?.hasHadith || false),
-          chapterTitle: chunk.metadata?.chapterTitle || '',
-        });
-        chunk.vectorId = id;
-      }
-
-      // Add in batches of 100
-      const batchSize = 100;
-      for (let i = 0; i < ids.length; i += batchSize) {
-        await this.collection.add({
-          ids: ids.slice(i, i + batchSize),
-          documents: documents.slice(i, i + batchSize),
-          metadatas: metadatas.slice(i, i + batchSize),
-        });
-      }
-
-      console.log(`✅ تم فهرسة ${chunks.length} جزء في قاعدة المتجهات`);
-      return chunks;
-    } catch (error) {
-      console.error('خطأ في الفهرسة:', error.message);
-      return chunks;
-    }
+    // Chunks are already saved to the database in admin.js upload route
+    // This method just marks them as indexed
+    console.log(`✅ تم فهرسة ${chunks.length} جزء نصي للكتاب: ${bookTitle}`);
+    return chunks.map((c, i) => ({ ...c, vectorId: `sql_${c.bookId}_${i}` }));
   }
 
   /**
-   * البحث الدلالي في الكتب
+   * البحث النصي في الكتب باستخدام SQL LIKE
    */
   async search(query, options = {}) {
-    if (!this.initialized) {
-      return [];
-    }
+    if (!this.initialized) return [];
 
     try {
       const nResults = options.nResults || 5;
-      const where = {};
+
+      // Strip diacritics for better Arabic search
+      const stripDiacritics = (s) => s.replace(/[\u064B-\u065F\u0670\u0640]/g, '');
+      const cleanQuery = stripDiacritics(query);
+
+      // Extract keywords
+      const stopWords = new Set([
+        'ما', 'هي', 'هو', 'في', 'من', 'إلى', 'على', 'عن', 'مع', 'أو', 'هل',
+        'كم', 'متى', 'أين', 'كيف', 'لماذا', 'ماذا', 'التي', 'الذي', 'ذلك',
+        'هذا', 'هذه', 'هناك', 'بعد', 'قبل', 'بين', 'حول', 'عند', 'لأن',
+        'لكن', 'ثم', 'بل', 'قد', 'لا', 'لم', 'لن', 'إن', 'أن', 'كان',
+      ]);
+
+      const keywords = cleanQuery
+        .replace(/[؟?!،,.]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.has(w));
+
+      if (keywords.length === 0) return [];
+
+      const col = 'IFNULL(tc.content_clean, tc.content)';
+
+      // Build SQL query
+      let sql = `
+        SELECT tc.content, tc.page_start, tc.page_end, tc.book_id,
+               b.title as book_title, b.author as book_author
+        FROM text_chunks tc
+        JOIN books b ON tc.book_id = b.id
+        WHERE (${keywords.map(() => `${col} LIKE ?`).join(' OR ')})
+      `;
+      const params = keywords.map(k => `%${k}%`);
 
       if (options.bookId) {
-        where.bookId = String(options.bookId);
+        sql += ' AND tc.book_id = ?';
+        params.push(options.bookId);
       }
 
-      const results = await this.collection.query({
-        queryTexts: [query],
-        nResults,
-        ...(Object.keys(where).length > 0 ? { where } : {}),
-      });
+      sql += ` LIMIT ${nResults}`;
 
-      if (!results || !results.documents || !results.documents[0]) {
-        return [];
-      }
+      const [rows] = await pool.execute(sql, params);
 
-      return results.documents[0].map((doc, idx) => ({
-        content: doc,
-        metadata: results.metadatas[0][idx],
-        distance: results.distances?.[0]?.[idx] || 0,
-        id: results.ids[0][idx],
+      return rows.map(row => ({
+        content: row.content,
+        metadata: {
+          bookId: String(row.book_id),
+          bookTitle: row.book_title,
+          bookAuthor: row.book_author,
+          pageStart: String(row.page_start || ''),
+          pageEnd: String(row.page_end || ''),
+        },
+        distance: 0,
+        id: `sql_${row.book_id}_${row.page_start}`,
       }));
     } catch (error) {
-      console.error('خطأ في البحث:', error.message);
+      console.error('خطأ في البحث النصي:', error.message);
       return [];
     }
   }
@@ -129,16 +105,8 @@ class VectorStore {
    * حذف كل أجزاء كتاب معين
    */
   async deleteBookChunks(bookId) {
-    if (!this.initialized) return;
-
-    try {
-      await this.collection.delete({
-        where: { bookId: String(bookId) },
-      });
-      console.log(`✅ تم حذف فهرس الكتاب ${bookId}`);
-    } catch (error) {
-      console.error('خطأ في حذف الفهرس:', error.message);
-    }
+    // Deletion is handled by CASCADE in the database
+    console.log(`✅ تم حذف فهرس الكتاب ${bookId}`);
   }
 
   /**
@@ -147,7 +115,8 @@ class VectorStore {
   async getCount() {
     if (!this.initialized) return 0;
     try {
-      return await this.collection.count();
+      const [rows] = await pool.execute('SELECT COUNT(*) as count FROM text_chunks');
+      return rows[0].count;
     } catch {
       return 0;
     }

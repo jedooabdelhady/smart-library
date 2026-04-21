@@ -7,7 +7,7 @@ const HomePage = ({ books, onSelectBook, onNavigate }) => {
   const recentBooks = books.slice(0, 4);
 
   const stats = [
-    { label: 'كتاب متوفر', value: books.length || '200+', icon: <FiBook /> },
+    { label: 'كتاب متوفر', value: books.length, icon: <FiBook /> },
     { label: 'تصنيف علمي', value: '8', icon: <FiSearch /> },
     { label: 'استعلام ذكي', value: '∞', icon: <FiMessageSquare /> },
   ];
@@ -37,7 +37,7 @@ const HomePage = ({ books, onSelectBook, onNavigate }) => {
             </h1>
             <p className="text-gold-light/60 text-lg mb-8 max-w-2xl mx-auto leading-relaxed">
               منصة متكاملة للبحث والمعرفة الدينية مدعومة بالذكاء الاصطناعي.
-              اكتشف أكثر من 200 كتاب ديني وأكاديمي مع مساعد ذكي يجيب على أسئلتك بالأدلة والمصادر.
+              اكتشف الكتب الدينية والأكاديمية مع مساعد ذكي يجيب على أسئلتك بالأدلة والمصادر.
             </p>
 
             <div className="flex items-center justify-center gap-4">
@@ -90,6 +90,21 @@ const HomePage = ({ books, onSelectBook, onNavigate }) => {
           </button>
         </div>
 
+        {featuredBooks.length === 0 ? (
+          <div className="text-center py-16 bg-beige/30 rounded-2xl border border-beige-dark">
+            <FiBook className="mx-auto text-gold/30 mb-4" size={48} />
+            <p className="text-navy/50 text-lg font-bold mb-2" style={{ fontFamily: "'Amiri', serif" }}>
+              لم يتم رفع أي كتب بعد
+            </p>
+            <p className="text-navy/30 text-sm mb-4">ارفع كتبك من لوحة التحكم لتظهر هنا</p>
+            <button
+              onClick={() => onNavigate('admin')}
+              className="px-6 py-2 btn-luxury rounded-xl text-sm font-bold"
+            >
+              رفع كتاب جديد
+            </button>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {featuredBooks.map((book, idx) => (
             <motion.div
@@ -132,6 +147,7 @@ const HomePage = ({ books, onSelectBook, onNavigate }) => {
             </motion.div>
           ))}
         </div>
+        )}
       </div>
 
       {/* Features Section */}

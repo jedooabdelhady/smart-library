@@ -1,12 +1,17 @@
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// In production (on Render), the backend serves the frontend, so use relative /api
+// In development, use the env variable or default to localhost:5000/api
+const API_BASE = process.env.REACT_APP_API_URL || (
+  window.location.hostname === 'localhost' ? 'http://localhost:5000/api' : '/api'
+);
 
 const api = axios.create({
   baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 seconds default timeout
 });
 
 // كتب
@@ -14,12 +19,13 @@ export const getBooks = () => api.get('/books');
 export const getBook = (id) => api.get(`/books/${id}`);
 export const getBookPages = (id) => api.get(`/books/${id}/pages`);
 export const searchBooks = (query) => api.get(`/books/search?q=${query}`);
-export const getCategories = () => api.get('/categories');
+export const getCategories = () => api.get('/books/categories/all');
 
-// رفع كتاب (مسؤول)
+// رفع كتاب (مسؤول) — timeout 10 دقائق للملفات الكبيرة
 export const uploadBook = (formData) =>
   api.post('/admin/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 600000, // 10 minutes for large file uploads
   });
 
 export const deleteBook = (id) => api.delete(`/admin/books/${id}`);
