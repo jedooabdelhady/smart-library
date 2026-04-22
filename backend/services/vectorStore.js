@@ -93,77 +93,84 @@ class VectorStore {
         id: `sql_${row.book_id}_${row.page_start}`,
       }));
 
-      const runQuery = async (conditions, params) => {
+      const runQuery = async (conditions, params, scoreExpr = null, scoreParams = []) => {
         let sql = `
           SELECT tc.content, tc.page_start, tc.page_end, tc.book_id,
                  b.title as book_title, b.author as book_author
+        `;
+        if (scoreExpr) {
+          sql += `, ${scoreExpr} as score`;
+        } else {
+          sql += `, 0 as score`;
+        }
+        sql += `
           FROM text_chunks tc
           JOIN books b ON tc.book_id = b.id
           WHERE (${conditions})
         `;
-        const finalParams = [...params];
+        const finalParams = [...scoreParams, ...params];
         if (bookId) { sql += ' AND tc.book_id = ?'; finalParams.push(bookId); }
+        if (scoreExpr) {
+          sql += ` ORDER BY score DESC`;
+        }
         sql += ` LIMIT ${nResults}`;
         const [rows] = await pool.execute(sql, finalParams);
         return rows;
       };
 
-      // ── 0a: الأزواج المتجاورة ──
+      const exactPhrases = [];
+      const synonymPhrases = [];
+      
       if (keywords.length >= 2) {
-        const exactPhrases = [];
         for (let i = 0; i < keywords.length - 1; i++) {
           exactPhrases.push(`${keywords[i]} ${keywords[i + 1]}`);
-        }
-        const exactConditions = exactPhrases.map(() => `${col} LIKE ?`).join(' OR ');
-        const exactRows = await runQuery(exactConditions, exactPhrases.map(p => `%${p}%`));
-        if (exactRows.length > 0) return mapRows(exactRows);
-
-        // ── 0b: مرادفات متجاورة ──
-        const synonymPhrases = new Set();
-        for (let i = 0; i < keywords.length - 1; i++) {
+          
           const w1 = keywords[i];
           const w2 = keywords[i + 1];
-          if (fiqhSynonyms[w1]) for (const syn of fiqhSynonyms[w1]) synonymPhrases.add(`${syn} ${w2}`);
-          if (fiqhSynonyms[w2]) for (const syn of fiqhSynonyms[w2]) synonymPhrases.add(`${w1} ${syn}`);
-        }
-        if (synonymPhrases.size > 0) {
-          const synArr = [...synonymPhrases];
-          const synConditions = synArr.map(() => `${col} LIKE ?`).join(' OR ');
-          const synRows = await runQuery(synConditions, synArr.map(p => `%${p}%`));
-          if (synRows.length > 0) return mapRows(synRows);
+          if (fiqhSynonyms[w1]) for (const syn of fiqhSynonyms[w1]) synonymPhrases.push(`${syn} ${w2}`);
+          if (fiqhSynonyms[w2]) for (const syn of fiqhSynonyms[w2]) synonymPhrases.push(`${w1} ${syn}`);
         }
       }
 
-      // ── 1: موضوع مع مرادفات فقهية ──
-      const topicWords = keywords.filter(w => !fiqhSynonyms[w]);
-      const structWords = keywords.filter(w => fiqhSynonyms[w]);
+      // Build scoring expression
+      const scoreExprs = [];
+      const scoreParams = [];
+      
+      exactPhrases.forEach(p => {
+        scoreExprs.push(`(${col} LIKE ?) * 5`);
+        scoreParams.push(`%${p}%`);
+      });
+      
+      synonymPhrases.forEach(p => {
+        scoreExprs.push(`(${col} LIKE ?) * 3`);
+        scoreParams.push(`%${p}%`);
+      });
+      
+      keywords.forEach(k => {
+        scoreExprs.push(`(${col} LIKE ?) * 1`);
+        scoreParams.push(`%${k}%`);
+      });
+      
+      const scoreSql = scoreExprs.length > 0 ? `(${scoreExprs.join(' + ')})` : null;
 
-      if (topicWords.length > 0 && structWords.length > 0) {
-        const synonymVariants = structWords.flatMap(w => fiqhSynonyms[w] || [w]);
-        const uniqueSynonyms = [...new Set(synonymVariants)];
-        const topicConditions = topicWords.map(() => `${col} LIKE ?`).join(' AND ');
-        const synonymConditions = uniqueSynonyms.map(() => `${col} LIKE ?`).join(' OR ');
-        const combinedConditions = `(${topicConditions}) AND (${synonymConditions})`;
-        const combinedParams = [
-          ...topicWords.map(w => `%${w}%`),
-          ...uniqueSynonyms.map(w => `%${w}%`),
-        ];
-        const synonymRows = await runQuery(combinedConditions, combinedParams);
-        if (synonymRows.length > 0) return mapRows(synonymRows);
-      }
-
-      // ── 2: كل الكلمات (AND) ──
-      const andRows = await runQuery(
-        keywords.map(() => `${col} LIKE ?`).join(' AND '),
-        keywords.map(k => `%${k}%`)
-      );
+      // ── 1: كل الكلمات (AND) ──
+      const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
+      const andParams = keywords.map(k => `%${k}%`);
+      const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams);
       if (andRows.length > 0) return mapRows(andRows);
 
+      // ── 2: العبارات المتجاورة (OR) ──
+      if (exactPhrases.length > 0) {
+        const exactConditions = exactPhrases.map(() => `${col} LIKE ?`).join(' OR ');
+        const exactParams = exactPhrases.map(p => `%${p}%`);
+        const exactRows = await runQuery(exactConditions, exactParams, scoreSql, scoreParams);
+        if (exactRows.length > 0) return mapRows(exactRows);
+      }
+
       // ── 3: أي كلمة (OR) ──
-      const orRows = await runQuery(
-        keywords.map(() => `${col} LIKE ?`).join(' OR '),
-        keywords.map(k => `%${k}%`)
-      );
+      const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
+      const orParams = keywords.map(k => `%${k}%`);
+      const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams);
       return mapRows(orRows);
 
     } catch (error) {

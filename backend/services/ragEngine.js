@@ -19,15 +19,16 @@ class RAGEngine {
 
   async initialize() {
     try {
-      if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your-openai-api-key-here') {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (apiKey && apiKey !== 'your-openai-api-key-here' && apiKey.trim() !== '') {
         this.llm = new ChatOpenAI({
-          openAIApiKey: process.env.OPENAI_API_KEY,
+          openAIApiKey: apiKey,
           modelName: 'gpt-4o-mini',
-          temperature: 0.1, // حرارة منخفضة جداً لمنع الهلوسة
-          maxTokens: 2000,
+          temperature: 0.3, // حرارة معتدلة للسماح بصياغة أفضل
+          maxTokens: 3000,
         });
         this.initialized = true;
-        console.log('✅ محرك الذكاء الاصطناعي جاهز');
+        console.log('✅ محرك الذكاء الاصطناعي جاهز (GPT-4o-mini)');
       } else {
         console.log('⚠️ مفتاح OpenAI غير محدد - سيعمل بوضع البحث النصي فقط');
       }
@@ -40,9 +41,11 @@ class RAGEngine {
    * الإجابة على سؤال ديني
    */
   async answer(question, bookId = null) {
+    console.log(`\n🔍 سؤال جديد: "${question}"`);
+
     // 1. استرجاع السياق من قاعدة المتجهات
     const contexts = await vectorStore.search(question, {
-      nResults: 50, // تم رفع الحد الأقصى إلى 50 لجلب أكبر قدر ممكن من السياق من جميع الكتب
+      nResults: 15,
       bookId,
     });
 
@@ -53,27 +56,43 @@ class RAGEngine {
       page: c.metadata?.pageStart || '?',
     }));
 
-    // 3. إذا لم يوجد سياق أبداً
+    console.log(`📚 عدد النتائج المسترجعة: ${allContexts.length}`);
+
+    // 2. إذا لم يوجد سياق أبداً
     if (allContexts.length === 0) {
+      console.log('❌ لا توجد نتائج بحث');
       return {
-        answer: 'عذراً، لم أتمكن من العثور على إجابة لهذا السؤال في الكتب المتوفرة في المكتبة.\n\nيرجى المحاولة بصياغة مختلفة أو التأكد من أن الكتب ذات الصلة قد تم رفعها وفهرستها.',
+        answer: 'عذراً، لم أتمكن من العثور على نتائج لهذا السؤال. يرجى المحاولة بصياغة مختلفة.',
         sources: [],
         confidence: 0,
       };
     }
 
-    // 4. بناء السياق للنموذج
-    const contextText = allContexts.map((c, i) =>
+    // 3. بناء السياق للنموذج - أخذ أفضل النتائج فقط
+    const bestContexts = allContexts.slice(0, 10);
+    const contextText = bestContexts.map((c, i) =>
       `[مصدر ${i + 1}] الكتاب: ${c.book} | الصفحة: ${c.page}\n${c.text}`
     ).join('\n\n---\n\n');
 
-    // 5. إذا لم يكن هناك LLM، إرجاع السياق مباشرة
+    // 4. بناء قائمة المصادر
+    const sources = allContexts.map(c => ({
+      book: c.book,
+      page: c.page,
+      author: c.author,
+    }));
+    const uniqueSources = sources.filter((s, i, arr) =>
+      arr.findIndex(x => x.book === s.book && x.page === s.page) === i
+    );
+
+    // 5. إذا لم يكن هناك LLM، إرجاع السياق مباشرة مع تنسيق ذكي
     if (!this.initialized) {
+      console.log('⚠️ LLM غير متاح - استخدام الإجابة المباشرة');
       return this.formatDirectResponse(question, allContexts);
     }
 
-    // 6. استدعاء النموذج مع التعليمات الصارمة
+    // 6. استدعاء النموذج
     try {
+      console.log('🤖 إرسال للنموذج...');
       const response = await this.llm.invoke([
         {
           role: 'system',
@@ -81,23 +100,27 @@ class RAGEngine {
         },
         {
           role: 'user',
-          content: `السؤال: ${question}\n\n--- السياق المسترجع من الكتب ---\n\n${contextText}\n\n--- نهاية السياق ---\n\nأجب على السؤال بناءً على السياق أعلاه فقط. استخرج كل النقاط أو الآراء المتعلقة بالسؤال من السياق واذكرها. إذا كان السياق يحتوي على جزء من الإجابة فقط (مثل بعض الشروط وليس كلها)، فاذكر ما وجدته بوضوح. لا تعتذر إلا إذا كان السياق لا يحتوي على أي معلومة مفيدة للإجابة على السؤال إطلاقاً.`,
+          content: this.buildUserPrompt(question, contextText),
         },
       ]);
 
-      const sources = allContexts.map(c => ({
-        book: c.book,
-        page: c.page,
-        author: c.author,
-      }));
+      let answer = response.content;
+      console.log(`✅ تم الحصول على إجابة (${answer.length} حرف)`);
 
-      // Remove duplicate sources
-      const uniqueSources = sources.filter((s, i, arr) =>
-        arr.findIndex(x => x.book === s.book && x.page === s.page) === i
-      );
+      // 7. فحص الإجابة - منع "لم أجد" إذا كان هناك سياق
+      if (this.isRefusalAnswer(answer) && allContexts.length > 0) {
+        console.log('⚠️ النموذج رفض الإجابة رغم وجود سياق - إعادة المحاولة بتعليمات أقوى');
+        answer = await this.retryWithStrongerPrompt(question, contextText);
+      }
+
+      // 8. إذا لا يزال يرفض، استخدم الإجابة المباشرة
+      if (this.isRefusalAnswer(answer) && allContexts.length > 0) {
+        console.log('⚠️ النموذج لا يزال يرفض - استخدام الإجابة المباشرة');
+        return this.formatDirectResponse(question, allContexts);
+      }
 
       return {
-        answer: response.content,
+        answer,
         sources: uniqueSources,
         confidence: allContexts.length > 3 ? 'high' : 'medium',
       };
@@ -105,6 +128,84 @@ class RAGEngine {
       console.error('خطأ في استدعاء النموذج:', error.message);
       return this.formatDirectResponse(question, allContexts);
     }
+  }
+
+  /**
+   * فحص هل الإجابة هي رفض/اعتذار
+   */
+  isRefusalAnswer(answer) {
+    const refusalPhrases = [
+      'عذراً، لم أجد',
+      'لم أجد إجابة',
+      'لم أتمكن من العثور',
+      'لا يحتوي على',
+      'غير كافٍ',
+      'غير كاف',
+      'لا توجد معلومات',
+      'لم يتضمن',
+      'لا يتضمن السياق',
+      'السياق لا يحتوي',
+      'النصوص لا تحتوي',
+      'لم أعثر',
+    ];
+    const lower = answer.trim();
+    return refusalPhrases.some(phrase => lower.includes(phrase));
+  }
+
+  /**
+   * إعادة المحاولة مع تعليمات أقوى
+   */
+  async retryWithStrongerPrompt(question, contextText) {
+    try {
+      const response = await this.llm.invoke([
+        {
+          role: 'system',
+          content: `أنت مساعد أكاديمي. لديك نصوص من كتب دينية. مهمتك الوحيدة هي تلخيص وشرح ما في هذه النصوص.
+
+⛔ ممنوع منعاً باتاً أن تقول "لم أجد" أو "عذراً" أو أي عبارة اعتذار.
+⛔ ممنوع أن تقول "السياق غير كافٍ".
+
+✅ اقرأ النصوص بعناية واستخرج منها كل ما يتعلق بالسؤال.
+✅ إذا وجدت أي معلومة ولو بسيطة، اذكرها وفصّلها.
+✅ رتّب إجابتك: الحكم، ثم الدليل، ثم المصدر.`,
+        },
+        {
+          role: 'user',
+          content: `اقرأ هذه النصوص من الكتب وأجب عن السؤال:
+
+السؤال: ${question}
+
+النصوص:
+${contextText}
+
+اكتب إجابة شاملة مبنية على هذه النصوص. اذكر كل ما وجدته متعلقاً بالموضوع.`,
+        },
+      ]);
+      return response.content;
+    } catch (error) {
+      console.error('خطأ في إعادة المحاولة:', error.message);
+      return 'عذراً، حدث خطأ تقني.';
+    }
+  }
+
+  /**
+   * بناء الـ prompt للمستخدم
+   */
+  buildUserPrompt(question, contextText) {
+    return `السؤال: ${question}
+
+━━━━━━━━ النصوص المسترجعة من الكتب ━━━━━━━━
+
+${contextText}
+
+━━━━━━━━ نهاية النصوص ━━━━━━━━
+
+التعليمات:
+1. اقرأ كل النصوص أعلاه بعناية شديدة.
+2. استخرج كل ما يتعلق بالسؤال "${question}" من هذه النصوص.
+3. صِغ إجابة واضحة ومفصّلة تشمل: الحكم الشرعي، الأدلة، أقوال العلماء.
+4. اذكر المصدر (اسم الكتاب والصفحة) لكل معلومة.
+5. لا تعتذر ولا تقل "لم أجد" - النصوص أمامك وفيها الإجابة.`;
   }
 
   /**
@@ -210,7 +311,7 @@ class RAGEngine {
 
 
   /**
-   * تنسيق إجابة مباشرة بدون LLM — نسخة محسّنة
+   * تنسيق إجابة مباشرة بدون LLM — نسخة محسّنة تعرض المحتوى بشكل مفيد
    */
   formatDirectResponse(question, contexts) {
     // إزالة التكرار وأخذ أفضل 5 نصوص
@@ -230,28 +331,25 @@ class RAGEngine {
       };
     }
 
-    // بناء الإجابة بشكل منسّق
-    let answer = `## ما وجدناه في المكتبة حول سؤالك\n\n`;
+    // بناء الإجابة بشكل منسّق - عرض محتوى الكتب مباشرة
+    let answer = `فيما يلي ما ورد في الكتب المتوفرة حول سؤالك:\n\n`;
 
     unique.forEach((ctx, i) => {
-      const bookLine = `**📖 ${ctx.book}${ctx.page ? ` — الصفحة ${ctx.page}` : ''}:**`;
+      const bookLine = `📖 **${ctx.book}${ctx.page ? ` — الصفحة ${ctx.page}` : ''}:**`;
       answer += `${bookLine}\n\n`;
 
       // اقتطاع النص بشكل ذكي عند آخر جملة كاملة
       let excerpt = ctx.text || '';
-      if (excerpt.length > 600) {
-        excerpt = excerpt.slice(0, 600);
+      if (excerpt.length > 800) {
+        excerpt = excerpt.slice(0, 800);
         const lastDot = Math.max(excerpt.lastIndexOf('.'), excerpt.lastIndexOf('،'), excerpt.lastIndexOf('\n'));
-        if (lastDot > 300) excerpt = excerpt.slice(0, lastDot + 1);
+        if (lastDot > 400) excerpt = excerpt.slice(0, lastDot + 1);
         excerpt += '...';
       }
       answer += `${excerpt}\n\n`;
 
       if (i < unique.length - 1) answer += `---\n\n`;
     });
-
-    // ملاحظة في الأسفل
-    answer += `\n> 💡 *هذه نتائج البحث المباشر — المساعد الذكي سيصيغ الإجابة قريباً.*`;
 
     const uniqueSources = unique.map(c => ({ book: c.book, page: c.page, author: c.author }));
 
@@ -263,27 +361,31 @@ class RAGEngine {
   }
 
   /**
-   * التعليمات الأساسية للنموذج
+   * التعليمات الأساسية للنموذج - نسخة محسّنة تمنع الاعتذار
    */
   getSystemPrompt() {
-    return `أنت مساعد أكاديمي متخصص في العلوم الشرعية والدينية الإسلامية. مهمتك الإجابة على الأسئلة بناءً حصرياً على النصوص المسترجعة من الكتب المتوفرة.
+    return `أنت عالم شرعي متخصص ومساعد أكاديمي. مهمتك الإجابة على الأسئلة الدينية بناءً على النصوص المسترجعة من كتب العلم الشرعي.
 
-## القواعد الصارمة:
+## القاعدة الأهم - ممنوع الاعتذار:
+⛔ لا تقل أبداً "عذراً" أو "لم أجد" أو "السياق غير كافٍ" أو "لا يحتوي على إجابة" عندما تُعطى نصوصاً من الكتب.
+⛔ النصوص التي تُعطاها هي نتائج بحث من كتب فقهية حقيقية - وهي بالتأكيد تحتوي على معلومات مفيدة.
+✅ مهمتك هي قراءة هذه النصوص واستخراج الفائدة منها وتقديمها بأسلوب واضح.
 
-1. **لا هلوسة أبداً**: لا تختلق معلومات من خارج السياق. إذا كان السياق لا يحتوي على أي إجابة مرتبطة بالسؤال، حينها فقط قل: "عذراً، لم أجد إجابة لهذا السؤال في الكتب المتوفرة في المكتبة." أما إذا احتوى على إجابة جزئية فاذكرها.
+## كيف تجيب:
+1. اقرأ كل النصوص المقدمة بعناية فائقة.
+2. استخرج كل ما يتعلق بالسؤال - حتى لو كانت الصلة غير مباشرة.
+3. رتّب إجابتك بهذا الشكل:
+   - **الحكم الشرعي**: ما هو الحكم
+   - **الأدلة**: الآيات والأحاديث والإجماع
+   - **أقوال العلماء**: إن وجدت آراء مختلفة اذكرها
+   - **المصدر**: اسم الكتاب ورقم الصفحة
+4. إذا وجدت آراء مختلفة، اعرضها جميعاً بإنصاف.
+5. أجب بالعربية الفصحى بأسلوب أكاديمي واضح.
 
-2. **تنسيق الإجابة الإلزامي**:
-   - عرض الأقوال المختلفة إن وُجدت
-   - ذكر الدليل لكل قول (آية، حديث، إجماع، قياس)
-   - المصدر: اسم الكتاب، الصفحة
-
-3. **الاستشهاد الإلزامي**: كل معلومة يجب أن تكون مرتبطة بمصدر محدد من السياق المسترجع.
-
-4. **اللغة**: أجب بالعربية الفصحى بأسلوب أكاديمي واضح.
-
-5. **الأمانة العلمية**: إذا كان السياق يحتوي على آراء مختلفة، اعرضها جميعاً بإنصاف.
-
-6. **التحفظ**: إذا كان السياق غير كافٍ للإجابة الشاملة، نبّه على ذلك واذكر ما توفر فقط.`;
+## تذكّر:
+- كل نص يُعطى لك هو من كتاب حقيقي وفيه فائدة.
+- لا تتجاهل أي نص - اقرأه واستفد منه.
+- الأسئلة دينية والكتب دينية، فالإجابة موجودة حتماً.`;
   }
 }
 
