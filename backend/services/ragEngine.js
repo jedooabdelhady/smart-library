@@ -42,25 +42,16 @@ class RAGEngine {
   async answer(question, bookId = null) {
     // 1. استرجاع السياق من قاعدة المتجهات
     const contexts = await vectorStore.search(question, {
-      nResults: 8,
+      nResults: 50, // تم رفع الحد الأقصى إلى 50 لجلب أكبر قدر ممكن من السياق من جميع الكتب
       bookId,
     });
 
-    // 2. بحث نصي بديل في قاعدة البيانات
-    let dbResults = [];
-    if (contexts.length === 0) {
-      dbResults = await this.searchInDatabase(question, bookId);
-    }
-
-    const allContexts = [
-      ...contexts.map(c => ({
-        text: c.content,
-        book: c.metadata?.bookTitle || 'غير محدد',
-        author: c.metadata?.bookAuthor || '',
-        page: c.metadata?.pageStart || '?',
-      })),
-      ...dbResults,
-    ];
+    const allContexts = contexts.map(c => ({
+      text: c.content,
+      book: c.metadata?.bookTitle || 'غير محدد',
+      author: c.metadata?.bookAuthor || '',
+      page: c.metadata?.pageStart || '?',
+    }));
 
     // 3. إذا لم يوجد سياق أبداً
     if (allContexts.length === 0) {
@@ -90,7 +81,7 @@ class RAGEngine {
         },
         {
           role: 'user',
-          content: `السؤال: ${question}\n\n--- السياق المسترجع من الكتب ---\n\n${contextText}\n\n--- نهاية السياق ---\n\nأجب على السؤال بناءً على السياق أعلاه فقط. إذا لم يحتوِ السياق على إجابة كافية، اعتذر وقل أنك لم تجد الإجابة في الكتب المتوفرة.`,
+          content: `السؤال: ${question}\n\n--- السياق المسترجع من الكتب ---\n\n${contextText}\n\n--- نهاية السياق ---\n\nأجب على السؤال بناءً على السياق أعلاه فقط. استخرج كل النقاط أو الآراء المتعلقة بالسؤال من السياق واذكرها. إذا كان السياق يحتوي على جزء من الإجابة فقط (مثل بعض الشروط وليس كلها)، فاذكر ما وجدته بوضوح. لا تعتذر إلا إذا كان السياق لا يحتوي على أي معلومة مفيدة للإجابة على السؤال إطلاقاً.`,
         },
       ]);
 
@@ -122,7 +113,7 @@ class RAGEngine {
   async summarize(bookId, chapter) {
     const contexts = await vectorStore.search(
       `${chapter} تلخيص`,
-      { nResults: 10, bookId }
+      { nResults: 15, bookId }
     );
 
     if (contexts.length === 0) {
@@ -172,7 +163,7 @@ class RAGEngine {
 
     for (const bId of bookIds) {
       const results = await vectorStore.search(topic, {
-        nResults: 4,
+        nResults: 8,
         bookId: bId,
       });
       allResults.push(...results);
@@ -217,137 +208,6 @@ class RAGEngine {
     };
   }
 
-  /**
-   * البحث في قاعدة البيانات (بديل عن Vector Search)
-   * الترتيب: عبارة كاملة → مرادفات فقهية → AND → OR
-   */
-  async searchInDatabase(query, bookId = null) {
-    try {
-      // ── مرادفات المصطلحات الفقهية ──
-      // إذا استخدم المستخدم أحد هذه الكلمات، نبحث أيضاً بمرادفاتها
-      const fiqhSynonyms = {
-        'شروط':    ['شروط', 'فروض', 'أركان', 'واجبات', 'صفة', 'باب'],
-        'فروض':    ['فروض', 'شروط', 'أركان', 'واجبات'],
-        'أركان':   ['أركان', 'فروض', 'شروط', 'واجبات'],
-        'واجبات':  ['واجبات', 'فروض', 'شروط', 'أركان'],
-        'حكم':     ['حكم', 'حكمه', 'حكمها', 'يجوز', 'يحرم', 'يستحب'],
-        'دليل':    ['دليل', 'دليله', 'الدليل', 'الأدلة', 'لقوله', 'لحديث'],
-        'أقسام':   ['أقسام', 'أنواع', 'أصناف'],
-        'أنواع':   ['أنواع', 'أقسام', 'أصناف'],
-      };
-
-      // استخراج الكلمات المهمة
-      const stopWords = new Set([
-        // حروف الجر والاستفهام
-        'ما', 'هي', 'هو', 'في', 'من', 'إلى', 'على', 'عن', 'مع', 'أو', 'هل', 'كم',
-        'متى', 'أين', 'كيف', 'لماذا', 'ماذا', 'التي', 'الذي', 'ذلك', 'هذا', 'هذه',
-        'تلك', 'هناك', 'حين', 'بعد', 'قبل', 'بين', 'حول', 'خلال', 'عند', 'لأن',
-        'لكن', 'ثم', 'بل', 'قد', 'لا', 'لم', 'لن', 'إن', 'أن', 'كان', 'يكون',
-        'عند', 'حتى', 'إذا', 'إذ', 'أما', 'فإن', 'وإن', 'كما',
-        // أسماء الكتب (لا تُضاف للبحث — يكفي bookId)
-        'المغني', 'الممتع', 'الروض', 'المربع', 'الزركشي', 'الوجيز', 'المقنع',
-        'الخرقي', 'المستقنع', 'الكتاب', 'الكتب', 'المكتبة',
-      ]);
-      const keywords = query
-        .replace(/[؟?!،,\.]/g, '')
-        .split(/\s+/)
-        .filter(w => w.length > 2 && !stopWords.has(w));
-
-      if (keywords.length === 0) return [];
-
-      const mapRows = (rows) => rows.map(r => ({
-        text: r.content,
-        book: r.book_title,
-        author: r.book_author,
-        page: r.page_start,
-      }));
-
-      // Strip diacritics from keywords before searching
-      const stripD = (s) => s.replace(/[\u064B-\u065F\u0670\u0640]/g, '');
-      const cleanKeywords = keywords.map(stripD);
-
-      const runQuery = async (conditions, params) => {
-        let sql = `
-          SELECT tc.content, tc.page_start, tc.page_end,
-                 b.title as book_title, b.author as book_author
-          FROM text_chunks tc
-          JOIN books b ON tc.book_id = b.id
-          WHERE (${conditions})
-        `;
-        const finalParams = [...params];
-        if (bookId) { sql += ' AND tc.book_id = ?'; finalParams.push(bookId); }
-        sql += ' LIMIT 8';
-        const [rows] = await pool.execute(sql, finalParams);
-        return rows;
-      };
-
-      // Use content_clean (diacritics-stripped) for all LIKE searches
-      const col = 'IFNULL(tc.content_clean, tc.content)';
-
-      // ── المحاولة 0: بحث عن الأزواج المتجاورة — الأدق أولاً ──
-      if (cleanKeywords.length >= 2) {
-        // 0a: جرّب الأزواج الأصلية أولاً (بدون مرادفات)
-        const exactPhrases = [];
-        for (let i = 0; i < cleanKeywords.length - 1; i++) {
-          exactPhrases.push(`${cleanKeywords[i]} ${cleanKeywords[i + 1]}`);
-        }
-        const exactConditions = exactPhrases.map(() => `${col} LIKE ?`).join(' OR ');
-        const exactRows = await runQuery(exactConditions, exactPhrases.map(p => `%${p}%`));
-        if (exactRows.length > 0) return mapRows(exactRows);
-
-        // 0b: جرّب مرادفات كل كلمة مع جارتها (بشكل تسلسلي حسب الأولوية)
-        const synonymPhrases = new Set();
-        for (let i = 0; i < cleanKeywords.length - 1; i++) {
-          const w1 = cleanKeywords[i];
-          const w2 = cleanKeywords[i + 1];
-          if (fiqhSynonyms[w1]) for (const syn of fiqhSynonyms[w1]) synonymPhrases.add(`${syn} ${w2}`);
-          if (fiqhSynonyms[w2]) for (const syn of fiqhSynonyms[w2]) synonymPhrases.add(`${w1} ${syn}`);
-        }
-        if (synonymPhrases.size > 0) {
-          const synArr = [...synonymPhrases];
-          const synConditions = synArr.map(() => `${col} LIKE ?`).join(' OR ');
-          const synRows = await runQuery(synConditions, synArr.map(p => `%${p}%`));
-          if (synRows.length > 0) return mapRows(synRows);
-        }
-      }
-
-      // ── المحاولة 1: مرادفات فقهية ──
-      const topicWords = cleanKeywords.filter(w => !fiqhSynonyms[w]);
-      const structWords = cleanKeywords.filter(w => fiqhSynonyms[w]);
-
-      if (topicWords.length > 0 && structWords.length > 0) {
-        const synonymVariants = structWords.flatMap(w => fiqhSynonyms[w] || [w]);
-        const uniqueSynonyms = [...new Set(synonymVariants)];
-        const topicConditions = topicWords.map(() => `${col} LIKE ?`).join(' AND ');
-        const synonymConditions = uniqueSynonyms.map(() => `${col} LIKE ?`).join(' OR ');
-        const combinedConditions = `(${topicConditions}) AND (${synonymConditions})`;
-        const combinedParams = [
-          ...topicWords.map(w => `%${w}%`),
-          ...uniqueSynonyms.map(w => `%${w}%`),
-        ];
-        const synonymRows = await runQuery(combinedConditions, combinedParams);
-        if (synonymRows.length > 0) return mapRows(synonymRows);
-      }
-
-      // ── المحاولة 2: AND (جميع الكلمات) ──
-      const andRows = await runQuery(
-        cleanKeywords.map(() => `${col} LIKE ?`).join(' AND '),
-        cleanKeywords.map(k => `%${k}%`)
-      );
-      if (andRows.length > 0) return mapRows(andRows);
-
-      // ── المحاولة 3: OR (أي كلمة — أوسع نطاقاً) ──
-      const orRows = await runQuery(
-        cleanKeywords.map(() => `${col} LIKE ?`).join(' OR '),
-        cleanKeywords.map(k => `%${k}%`)
-      );
-      return mapRows(orRows);
-
-    } catch (error) {
-      console.error('searchInDatabase error:', error.message);
-      return [];
-    }
-  }
 
   /**
    * تنسيق إجابة مباشرة بدون LLM — نسخة محسّنة
@@ -410,7 +270,7 @@ class RAGEngine {
 
 ## القواعد الصارمة:
 
-1. **لا هلوسة أبداً**: لا تختلق معلومات أو تضيف من عندك. إذا لم يكن الجواب في السياق المسترجع، قل: "عذراً، لم أجد إجابة كافية لهذا السؤال في الكتب المتوفرة في المكتبة."
+1. **لا هلوسة أبداً**: لا تختلق معلومات من خارج السياق. إذا كان السياق لا يحتوي على أي إجابة مرتبطة بالسؤال، حينها فقط قل: "عذراً، لم أجد إجابة لهذا السؤال في الكتب المتوفرة في المكتبة." أما إذا احتوى على إجابة جزئية فاذكرها.
 
 2. **تنسيق الإجابة الإلزامي**:
    - عرض الأقوال المختلفة إن وُجدت
