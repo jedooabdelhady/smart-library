@@ -23,10 +23,10 @@ function startBgInit() {
     });
 }
 
-module.exports = async (req, res) => {
+module.exports = (req, res) => {
   try {
     startBgInit();
-    return app(req, res);
+    app(req, res);
   } catch (err) {
     console.error('Handler error:', err);
     if (!res.headersSent) {
