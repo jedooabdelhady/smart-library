@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../config/database');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 // Lazy-load ragEngine so @langchain/openai is not required at startup
 let _ragEngine = null;
@@ -21,7 +21,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'الرسالة مطلوبة' });
     }
 
-    const sid = sessionId || uuidv4();
+    const sid = sessionId || randomUUID();
 
     // Save user message
     try {

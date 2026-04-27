@@ -1,6 +1,14 @@
 require('dotenv').config();
 
-const app = require('../backend/app');
+let app;
+try {
+  app = require('../backend/app');
+} catch (error) {
+  console.error('App init error:', error);
+  app = (req, res) => {
+    res.status(500).json({ error: 'App failed to load', details: error.stack });
+  };
+}
 
 // Initialize DB/services in the background — never block requests
 let bgStarted = false;

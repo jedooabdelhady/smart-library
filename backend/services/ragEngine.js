@@ -1,4 +1,3 @@
-const { ChatOpenAI } = require('@langchain/openai');
 const vectorStore = require('./vectorStore');
 const { pool } = require('../config/database');
 require('dotenv').config();
@@ -21,6 +20,8 @@ class RAGEngine {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
       if (apiKey && apiKey !== 'your-openai-api-key-here' && apiKey.trim() !== '') {
+        // Dynamic import for ESM modules to prevent ERR_REQUIRE_ESM on Vercel
+        const { ChatOpenAI } = await import('@langchain/openai');
         this.llm = new ChatOpenAI({
           openAIApiKey: apiKey,
           modelName: 'gpt-4o-mini',
