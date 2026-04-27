@@ -1,8 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const ragEngine = require('../services/ragEngine');
 const { pool } = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
+
+// Lazy-load ragEngine so @langchain/openai is not required at startup
+let _ragEngine = null;
+function getRagEngine() {
+  if (!_ragEngine) _ragEngine = require('../services/ragEngine');
+  return _ragEngine;
+}
 
 /**
  * POST /api/chat - إرسال سؤال للمساعد الذكي
@@ -26,7 +32,7 @@ router.post('/', async (req, res) => {
     } catch (e) {}
 
     // Get AI answer
-    const result = await ragEngine.answer(message, bookId);
+    const result = await getRagEngine().answer(message, bookId);
 
     // Save AI response
     try {
@@ -63,7 +69,7 @@ router.post('/summarize', async (req, res) => {
       return res.status(400).json({ error: 'معرف الكتاب والفصل مطلوبان' });
     }
 
-    const result = await ragEngine.summarize(bookId, chapter);
+    const result = await getRagEngine().summarize(bookId, chapter);
     res.json(result);
   } catch (error) {
     console.error('خطأ في التلخيص:', error);
@@ -82,7 +88,7 @@ router.post('/compare', async (req, res) => {
       return res.status(400).json({ error: 'الموضوع وكتابين على الأقل مطلوبان' });
     }
 
-    const result = await ragEngine.compare(topic, bookIds);
+    const result = await getRagEngine().compare(topic, bookIds);
     res.json(result);
   } catch (error) {
     console.error('خطأ في المقارنة:', error);

@@ -4,9 +4,22 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { pool } = require('../config/database');
-const textExtractor = require('../services/textExtractor');
-const ArabicTextSplitter = require('../services/textSplitter');
-const vectorStore = require('../services/vectorStore');
+
+// Lazy-load heavy deps so pdf-parse / mammoth don't load at startup
+let _textExtractor = null;
+let _vectorStore = null;
+function getTextExtractor() {
+  if (!_textExtractor) _textExtractor = require('../services/textExtractor');
+  return _textExtractor;
+}
+function getVectorStore() {
+  if (!_vectorStore) _vectorStore = require('../services/vectorStore');
+  return _vectorStore;
+}
+function makeTextSplitter(opts) {
+  const ArabicTextSplitter = require('../services/textSplitter');
+  return new ArabicTextSplitter(opts);
+}
 
 // Multer setup for file uploads
 // On Vercel the filesystem is read-only except /tmp; locally use backend/uploads
@@ -69,7 +82,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     console.log('📄 استخراج النص...');
     let extracted;
     try {
-      extracted = await textExtractor.extract(file.path);
+      extracted = await getTextExtractor().extract(file.path);
     } catch (extractErr) {
       console.error('❌ فشل استخراج النص:', extractErr.message);
       return res.status(500).json({ error: 'فشل في استخراج النص من الملف: ' + extractErr.message });
@@ -122,10 +135,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
     // Step 5: Smart text splitting
     console.log('✂️ تقسيم النص الذكي...');
-    const splitter = new ArabicTextSplitter({
-      chunkSize: 1000,
-      chunkOverlap: 200,
-    });
+    const splitter = makeTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
     const chunks = splitter.splitPages(extracted.pages, bookId);
     console.log(`✅ تم تقسيم النص إلى ${chunks.length} جزء`);
 
@@ -148,7 +158,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
     // Step 7: Index in vector store (now SQL-based, always succeeds)
     console.log('🧠 فهرسة البحث...');
-    await vectorStore.addChunks(chunks, title, author);
+    await getVectorStore().addChunks(chunks, title, author);
 
     // Step 8: Mark as indexed
     try {
@@ -182,7 +192,7 @@ router.delete('/books/:id', async (req, res) => {
     const bookId = req.params.id;
 
     // Delete from vector store
-    await vectorStore.deleteBookChunks(bookId);
+    await getVectorStore().deleteBookChunks(bookId);
 
     // Delete from database (cascades to pages and chunks)
     const [book] = await pool.execute('SELECT file_path FROM books WHERE id = ?', [bookId]);
