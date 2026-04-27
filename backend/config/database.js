@@ -9,7 +9,7 @@ const poolConfig = {
   port: parseInt(process.env.DB_PORT) || (isTiDB ? 4000 : 3306),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'smart_library',
+  database: (process.env.DB_NAME || 'smart_library').replace('smart-library', 'smart_library'),
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
@@ -35,7 +35,7 @@ const initDatabase = async () => {
         password: process.env.DB_PASSWORD || '',
       });
       await tempConn.execute(
-        `CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'smart_library'}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+        `CREATE DATABASE IF NOT EXISTS \`${(process.env.DB_NAME || 'smart_library').replace('smart-library', 'smart_library')}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
       );
       await tempConn.end();
     }
