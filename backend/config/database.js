@@ -13,7 +13,7 @@ const poolConfig = {
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
-  connectTimeout: 8000,
+  connectTimeout: 20000,
   charset: 'utf8mb4',
   // SSL required for TiDB Cloud
   ...(isTiDB && {

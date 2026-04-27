@@ -43,6 +43,16 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const { pool } = require('./config/database');
+    const [rows] = await pool.execute('SELECT COUNT(*) as count FROM books');
+    res.json({ success: true, count: rows[0].count, env: { DB_HOST: process.env.DB_HOST, DB_USER: process.env.DB_USER, DB_NAME: process.env.DB_NAME } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message, code: error.code, env: { DB_HOST: process.env.DB_HOST, DB_USER: process.env.DB_USER, DB_NAME: process.env.DB_NAME } });
+  }
+});
+
 app.use((err, req, res, next) => {
   console.error('خطأ:', err.message);
   res.status(500).json({
