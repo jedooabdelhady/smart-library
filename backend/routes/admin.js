@@ -9,13 +9,16 @@ const ArabicTextSplitter = require('../services/textSplitter');
 const vectorStore = require('../services/vectorStore');
 
 // Multer setup for file uploads
+// On Vercel the filesystem is read-only except /tmp; locally use backend/uploads
+const getUploadDir = () => {
+  const dir = process.env.VERCEL ? '/tmp' : path.join(__dirname, '..', 'uploads');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '..', 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
+    cb(null, getUploadDir());
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
