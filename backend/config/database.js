@@ -11,8 +11,9 @@ const poolConfig = {
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'smart_library',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 5,
   queueLimit: 0,
+  connectTimeout: 8000,
   charset: 'utf8mb4',
   // SSL required for TiDB Cloud
   ...(isTiDB && {

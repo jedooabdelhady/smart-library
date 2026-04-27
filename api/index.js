@@ -1,29 +1,36 @@
 require('dotenv').config();
 
-const { initDatabase } = require('../backend/config/database');
-const vectorStore = require('../backend/services/vectorStore');
-const ragEngine = require('../backend/services/ragEngine');
 const app = require('../backend/app');
 
-// Module-level promise so initialization runs once per function instance (cold start)
-let initPromise = null;
-
-const ensureInitialized = () => {
-  if (!initPromise) {
-    initPromise = (async () => {
+// Initialize DB/services in the background — never block requests
+let bgStarted = false;
+function startBgInit() {
+  if (bgStarted) return;
+  bgStarted = true;
+  Promise.resolve()
+    .then(async () => {
+      const { initDatabase } = require('../backend/config/database');
+      const vectorStore = require('../backend/services/vectorStore');
+      const ragEngine = require('../backend/services/ragEngine');
       await initDatabase();
       await vectorStore.initialize();
       await ragEngine.initialize();
-    })().catch((err) => {
-      // Reset so next request retries if init failed
-      initPromise = null;
-      throw err;
+      console.log('✅ Background initialization complete');
+    })
+    .catch((err) => {
+      console.error('Background init error:', err.message);
+      bgStarted = false; // allow retry on next request
     });
-  }
-  return initPromise;
-};
+}
 
 module.exports = async (req, res) => {
-  await ensureInitialized();
-  return app(req, res);
+  try {
+    startBgInit();
+    return app(req, res);
+  } catch (err) {
+    console.error('Handler error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Server error', message: err.message });
+    }
+  }
 };
