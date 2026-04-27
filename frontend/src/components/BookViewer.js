@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FiChevronRight, FiChevronLeft, FiMaximize2, FiMinimize2, FiBookmark, FiZoomIn, FiZoomOut, FiLoader } from 'react-icons/fi';
+import { FiChevronRight, FiChevronLeft, FiMaximize2, FiMinimize2, FiBookmark, FiZoomIn, FiZoomOut } from 'react-icons/fi';
 import { getBookPages } from '../services/api';
 
 // صفحات تجريبية للعرض فقط

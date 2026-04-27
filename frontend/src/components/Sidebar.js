@@ -14,7 +14,7 @@ const UploadModal = ({ onClose, onSuccess }) => {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [category, setCategory] = useState('fiqh');
-  const [description, setDescription] = useState('');
+  const [description] = useState('');
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState(null); // null | 'success' | 'error'
   const [message, setMessage] = useState('');

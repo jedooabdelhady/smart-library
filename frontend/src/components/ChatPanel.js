@@ -43,8 +43,8 @@ const MarkdownText = ({ text }) => {
       );
     } else if (line === '---') {
       result.push(<hr key={i} className="border-gold/20 my-2" />);
-    } else if (/^\s*[•\-]\s/.test(line)) {
-      const content = line.replace(/^\s*[•\-]\s/, '');
+    } else if (/^\s*[•-]\s/.test(line)) {
+      const content = line.replace(/^\s*[•-]\s/, '');
       result.push(
         <div key={i} className="flex gap-2 my-0.5 pr-1">
           <span className="text-gold flex-shrink-0 mt-0.5">•</span>

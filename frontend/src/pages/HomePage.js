@@ -4,7 +4,7 @@ import { FiBook, FiSearch, FiMessageSquare, FiStar, FiArrowLeft } from 'react-ic
 
 const HomePage = ({ books, onSelectBook, onNavigate }) => {
   const featuredBooks = books.slice(0, 6);
-  const recentBooks = books.slice(0, 4);
+
 
   const stats = [
     { label: 'كتاب متوفر', value: books.length, icon: <FiBook /> },
