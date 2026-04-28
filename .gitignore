@@ -24,6 +24,7 @@ backend/backend.log
 backend/uploads/*.pdf
 backend/uploads/*.epub
 backend/uploads/*.docx
+new_books/
 
 # OS files
 .DS_Store
