@@ -98,15 +98,15 @@ const AdvancedSearch = ({ books, onSelectBook }) => {
               <div className="flex-1">
                 <label className="block text-navy/70 text-sm font-bold mb-2">نوع البحث</label>
                 <div className="flex flex-wrap gap-2">
-                  <label className={\`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all \${searchType === 'exact' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}\`}>
+                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all ${searchType === 'exact' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}`}>
                     <input type="radio" name="type" value="exact" checked={searchType === 'exact'} onChange={() => setSearchType('exact')} className="hidden" />
                     تطابق تام
                   </label>
-                  <label className={\`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all \${searchType === 'root' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}\`}>
+                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all ${searchType === 'root' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}`}>
                     <input type="radio" name="type" value="root" checked={searchType === 'root'} onChange={() => setSearchType('root')} className="hidden" />
                     الجذر والاشتقاق
                   </label>
-                  <label className={\`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all \${searchType === 'thematic' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}\`}>
+                  <label className={`cursor-pointer px-4 py-2 rounded-lg text-sm transition-all ${searchType === 'thematic' ? 'bg-navy text-white' : 'bg-white text-navy/70 border border-navy/10'}`}>
                     <input type="radio" name="type" value="thematic" checked={searchType === 'thematic'} onChange={() => setSearchType('thematic')} className="hidden" />
                     بحث موضوعي
                   </label>
