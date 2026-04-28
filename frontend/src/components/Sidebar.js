@@ -313,6 +313,13 @@ const Sidebar = ({ books, onSelectBook, selectedBook, onNavigate, currentPage, i
           {!collapsed && <span>الرئيسية</span>}
         </button>
         <button
+          onClick={() => onNavigate('search')}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${currentPage === 'search' ? 'bg-gold/20 text-gold' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
+        >
+          <FiSearch size={16} />
+          {!collapsed && <span>البحث المتقدم</span>}
+        </button>
+        <button
           onClick={() => onNavigate('chat')}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${currentPage === 'chat' ? 'bg-gold/20 text-gold' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
         >
