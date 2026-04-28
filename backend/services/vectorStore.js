@@ -153,10 +153,31 @@ class VectorStore {
       
       const scoreSql = scoreExprs.length > 0 ? `(${scoreExprs.join(' + ')})` : null;
 
+      const searchType = options.searchType || 'thematic';
+
+      // ── تطابق تام (Exact Match) ──
+      if (searchType === 'exact') {
+        const exactRows = await runQuery(`${col} LIKE ?`, [`%${cleanQuery}%`], scoreSql, scoreParams);
+        return mapRows(exactRows);
+      }
+
       // ── 1: كل الكلمات (AND) ──
       const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
       const andParams = keywords.map(k => `%${k}%`);
       const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams);
+      
+      // إذا كان البحث 'root' (جذر/كلمات مفتاحية) نكتفي بالـ AND
+      if (searchType === 'root' && andRows.length > 0) {
+        return mapRows(andRows);
+      } else if (searchType === 'root' && andRows.length === 0) {
+        // Fallback to OR if no AND found in root search
+        const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
+        const orParams = keywords.map(k => `%${k}%`);
+        const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams);
+        return mapRows(orRows);
+      }
+
+      // ── بحث موضوعي (Thematic - Default) ──
       if (andRows.length > 0) return mapRows(andRows);
 
       // ── 2: العبارات المتجاورة (OR) ──

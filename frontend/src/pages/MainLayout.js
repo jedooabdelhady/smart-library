@@ -5,6 +5,7 @@ import BookViewer from '../components/BookViewer';
 import ChatPanel from '../components/ChatPanel';
 import HomePage from './HomePage';
 import AdminDashboard from './AdminDashboard';
+import AdvancedSearch from './AdvancedSearch';
 import { getBooks } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -61,6 +62,8 @@ const MainLayout = () => {
       case 'reader':
       case 'library':
         return <BookViewer book={selectedBook} onClose={() => handleNavigate('home')} />;
+      case 'search':
+        return <AdvancedSearch books={books} onSelectBook={handleSelectBook} />;
       case 'admin':
         return <AdminDashboard />;
       case 'chat':

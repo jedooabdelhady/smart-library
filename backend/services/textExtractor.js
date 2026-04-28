@@ -44,6 +44,21 @@ class TextExtractor {
     }
   }
 
+  async extractFromLegacyWord(filePath) {
+    try {
+      const WordExtractor = require('word-extractor');
+      const extractor = new WordExtractor();
+      const extracted = await extractor.extract(filePath);
+      const text = extracted.getBody();
+      const cleanedText = this.cleanArabicText(text);
+      const pages = this.splitIntoPages(cleanedText, 2000);
+      return { pages, totalPages: pages.length, metadata: {} };
+    } catch (error) {
+      console.error('خطأ في استخراج النص من ملف Word القديم (doc):', error.message);
+      throw error;
+    }
+  }
+
   async extractFromEPUB(filePath) {
     try {
       const { EPub } = require('epub2');
@@ -132,6 +147,7 @@ class TextExtractor {
       case '.pdf':
         return this.extractFromPDF(filePath);
       case '.doc':
+        return this.extractFromLegacyWord(filePath);
       case '.docx':
         return this.extractFromWord(filePath);
       case '.epub':

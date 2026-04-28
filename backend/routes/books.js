@@ -45,6 +45,30 @@ router.get('/search', async (req, res) => {
 });
 
 /**
+ * GET /api/books/advanced-search
+ * بحث متقدم داخل نصوص الكتب
+ */
+router.get('/advanced-search', async (req, res) => {
+  try {
+    const { q: query, bookId, type } = req.query;
+    if (!query) return res.json([]);
+
+    const vectorStore = require('../services/vectorStore');
+    const options = {
+      nResults: 50,
+      bookId: bookId || null,
+      searchType: type || 'thematic' // 'exact', 'root', 'thematic'
+    };
+
+    const results = await vectorStore.search(query, options);
+    res.json(results);
+  } catch (error) {
+    console.error('Advanced search error:', error.message);
+    res.json([]);
+  }
+});
+
+/**
  * GET /api/books/categories/all - جلب التصنيفات
  * *** يجب أن يكون قبل /:id ***
  */
