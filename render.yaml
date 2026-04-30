@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: smart-library-backend
+    name: smart-library
     env: node
     region: frankfurt
     plan: free
@@ -10,16 +10,16 @@ services:
       - key: NODE_ENV
         value: production
       - key: DB_HOST
-        value: gateway01.eu-central-1.prod.aws.tidbcloud.com
+        sync: false
       - key: DB_PORT
-        value: "4000"
+        sync: false
       - key: DB_USER
-        value: 2GnqtFmAMAVXMK6.root
+        sync: false
       - key: DB_PASSWORD
-        value: m4gccsUZ0QW5ATbc
+        sync: false
       - key: DB_NAME
-        value: smart_library
+        sync: false
       - key: JWT_SECRET
-        value: smart-library-secret-2024-prod-secure
+        sync: false
       - key: OPENAI_API_KEY
-        value: ""
+        sync: false
