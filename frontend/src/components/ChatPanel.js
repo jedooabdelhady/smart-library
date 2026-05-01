@@ -69,12 +69,13 @@ const ChatPanel = ({ selectedBook, isExpanded, onToggle, isMobileOpen, onMobileC
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: 'السلام عليكم ورحمة الله وبركاته 🌙\n\nأنا المساعد الذكي للمكتبة الدينية. يمكنني مساعدتك في:\n\n• البحث في الكتب والإجابة على الأسئلة الدينية\n• تلخيص فصول الكتب\n• مقارنة الآراء بين العلماء\n• استخراج المراجع والأدلة\n\nكل إجاباتي مبنية حصرياً على الكتب المتوفرة في المكتبة مع ذكر المصدر الدقيق.',
+      content: 'السلام عليكم ورحمة الله وبركاته 🌙\n\nأنا المساعد الذكي للمكتبة الدينية. يمكنني مساعدتك في:\n\n• البحث في الكتب والإجابة على الأسئلة الدينية\n• تلخيص فصول الكتب\n• مقارنة الآراء بين العلماء\n• استخراج المراجع والأدلة\n\nكل إجاباتي مبنية حصرياً على الكتب المتوفرة في المكتبة مع ذكر المصدر الدقيق.\n\n🔒 **أقوم بالتحقق المزدوج** من كل إجابة لضمان دقتها.',
       timestamp: new Date(),
     }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [showQuickActions, setShowQuickActions] = useState(true);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -90,7 +91,13 @@ const ChatPanel = ({ selectedBook, isExpanded, onToggle, isMobileOpen, onMobileC
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setLoadingStep(0);
     setShowQuickActions(false);
+
+    // Animated loading steps
+    const stepTimer1 = setTimeout(() => setLoadingStep(1), 3000);
+    const stepTimer2 = setTimeout(() => setLoadingStep(2), 8000);
+    const stepTimer3 = setTimeout(() => setLoadingStep(3), 15000);
 
     try {
       const response = await sendMessage(input, selectedBook?.id);
@@ -104,16 +111,20 @@ const ChatPanel = ({ selectedBook, isExpanded, onToggle, isMobileOpen, onMobileC
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: generateDemoResponse(input),
-        sources: selectedBook ? [{ book: selectedBook.title, page: Math.floor(Math.random() * 200) + 1 }] : [],
+        sources: [],
         timestamp: new Date(),
       }]);
     } finally {
+      clearTimeout(stepTimer1);
+      clearTimeout(stepTimer2);
+      clearTimeout(stepTimer3);
       setIsLoading(false);
+      setLoadingStep(0);
     }
   };
 
   const generateDemoResponse = (question) => {
-    return `عذراً، انقطع الاتصال أو استغرق البحث أكثر من 10 ثوانٍ (وهو الحد الأقصى المسموح به في النسخة المجانية من الخادم).\n\n💡 **نصيحة:** لضمان سرعة الإجابة:\n- اجعل سؤالك أكثر تحديداً.\n- استخدم كلمات مفتاحية دقيقة.\n- أو استخدم **"البحث المتقدم"** للبحث يدوياً فوراً.`;
+    return `عذراً، حدث خطأ في الاتصال بالخادم أو انقطع الاتصال أثناء البحث.\n\n💡 **نصيحة:** يرجى المحاولة مرة أخرى:\n- تأكد من اتصالك بالإنترنت.\n- اجعل سؤالك أكثر تحديداً.\n- أو استخدم **"البحث المتقدم"** للبحث يدوياً في الكتب.`;
   };
 
   const quickActions = [
@@ -208,10 +219,22 @@ const ChatPanel = ({ selectedBook, isExpanded, onToggle, isMobileOpen, onMobileC
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex items-center gap-2 text-navy/40 text-sm mr-2"
+            className="mr-2 p-3 bg-gold/5 rounded-xl border border-gold/10"
           >
-            <FiRefreshCw className="animate-spin" size={14} />
-            <span>جاري البحث في الكتب...</span>
+            <div className="flex items-center gap-2 text-navy/60 text-sm mb-2">
+              <FiRefreshCw className="animate-spin text-gold" size={14} />
+              <span className="font-bold">
+                {loadingStep === 0 && '🔍 جاري البحث الشامل في جميع الكتب...'}
+                {loadingStep === 1 && '📖 جاري تحليل النصوص وربط المعلومات...'}
+                {loadingStep === 2 && '🔎 جاري التحقق المزدوج من دقة الإجابة...'}
+                {loadingStep === 3 && '✍️ جاري صياغة الإجابة النهائية...'}
+              </span>
+            </div>
+            <div className="flex gap-1">
+              {[0,1,2,3].map(s => (
+                <div key={s} className={`h-1 flex-1 rounded-full transition-all duration-500 ${s <= loadingStep ? 'bg-gold' : 'bg-navy/10'}`} />
+              ))}
+            </div>
           </motion.div>
         )}
         <div ref={messagesEndRef} />

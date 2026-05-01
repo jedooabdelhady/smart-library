@@ -9,10 +9,12 @@ require('dotenv').config();
  * 1. لا هلوسة - الإجابة فقط من الكتب المتوفرة
  * 2. استشهاد إلزامي بالمصدر ورقم الصفحة
  * 3. تنسيق: [الأقوال] + [الأدلة] + [المصدر]
+ * 4. تحقق مزدوج من كل إجابة قبل إرسالها
  */
 class RAGEngine {
   constructor() {
     this.llm = null;
+    this.verifierLlm = null;
     this.initialized = false;
   }
 
@@ -20,16 +22,23 @@ class RAGEngine {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
       if (apiKey && apiKey !== 'your-openai-api-key-here' && apiKey.trim() !== '') {
-        // Dynamic import for ESM modules to prevent ERR_REQUIRE_ESM on Vercel
         const { ChatOpenAI } = await import('@langchain/openai');
+        // النموذج الرئيسي للإجابة - حرارة منخفضة جداً للدقة القصوى
         this.llm = new ChatOpenAI({
           openAIApiKey: apiKey,
           modelName: 'gpt-4o-mini',
-          temperature: 0.3, // حرارة معتدلة للسماح بصياغة أفضل
-          maxTokens: 3000,
+          temperature: 0.1,
+          maxTokens: 4096,
+        });
+        // نموذج التحقق - حرارة صفر للتحقق الصارم
+        this.verifierLlm = new ChatOpenAI({
+          openAIApiKey: apiKey,
+          modelName: 'gpt-4o-mini',
+          temperature: 0,
+          maxTokens: 2000,
         });
         this.initialized = true;
-        console.log('✅ محرك الذكاء الاصطناعي جاهز (GPT-4o-mini)');
+        console.log('✅ محرك الذكاء الاصطناعي جاهز (GPT-4o-mini) مع التحقق المزدوج');
       } else {
         console.log('⚠️ مفتاح OpenAI غير محدد - سيعمل بوضع البحث النصي فقط');
       }
@@ -39,43 +48,62 @@ class RAGEngine {
   }
 
   /**
-   * الإجابة على سؤال ديني
+   * الإجابة على سؤال ديني - مع تحقق مزدوج
    */
   async answer(question, bookId = null) {
     console.log(`\n🔍 سؤال جديد: "${question}"`);
 
-    // 1. استرجاع السياق من قاعدة المتجهات (تقليل العدد لتسريع المعالجة تحت 10 ثواني)
+    // 1. استرجاع سياق واسع من قاعدة البيانات - بحث شامل في الكتب
     const contexts = await vectorStore.search(question, {
-      nResults: 12,
+      nResults: 30,
       bookId,
     });
 
-    const allContexts = contexts.map(c => ({
-      text: c.content,
-      book: c.metadata?.bookTitle || 'غير محدد',
-      author: c.metadata?.bookAuthor || '',
-      page: c.metadata?.pageStart || '?',
-    }));
+    // 2. بحث إضافي بكلمات مفتاحية بديلة للتأكد من عدم فقدان أي نتيجة
+    const altKeywords = this.extractAlternativeKeywords(question);
+    let extraContexts = [];
+    if (altKeywords) {
+      extraContexts = await vectorStore.search(altKeywords, {
+        nResults: 15,
+        bookId,
+      });
+    }
 
-    console.log(`📚 عدد النتائج المسترجعة: ${allContexts.length}`);
+    // 3. دمج النتائج وإزالة التكرار
+    const allRaw = [...contexts, ...extraContexts];
+    const seen = new Set();
+    const allContexts = [];
+    for (const c of allRaw) {
+      const key = `${c.metadata?.bookId}_${c.metadata?.pageStart}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        allContexts.push({
+          text: c.content,
+          book: c.metadata?.bookTitle || 'غير محدد',
+          author: c.metadata?.bookAuthor || '',
+          page: c.metadata?.pageStart || '?',
+        });
+      }
+    }
 
-    // 2. إذا لم يوجد سياق أبداً
+    console.log(`📚 عدد النتائج المسترجعة (بعد إزالة التكرار): ${allContexts.length}`);
+
+    // 4. إذا لم يوجد سياق أبداً
     if (allContexts.length === 0) {
       console.log('❌ لا توجد نتائج بحث');
       return {
-        answer: 'عذراً، لم أتمكن من العثور على نتائج لهذا السؤال. يرجى المحاولة بصياغة مختلفة.',
+        answer: 'عذراً، لم أتمكن من العثور على نتائج لهذا السؤال في الكتب المتوفرة. يرجى المحاولة بصياغة مختلفة أو كلمات مفتاحية أخرى.',
         sources: [],
         confidence: 0,
       };
     }
 
-    // 3. بناء السياق للنموذج - أخذ أفضل النتائج فقط لتسريع Vercel
-    const bestContexts = allContexts.slice(0, 10);
-    const contextText = bestContexts.map((c, i) =>
+    // 5. بناء السياق الكامل للنموذج - إرسال كل النتائج بدون اختصار
+    const contextText = allContexts.map((c, i) =>
       `[مصدر ${i + 1}] الكتاب: ${c.book} | الصفحة: ${c.page}\n${c.text}`
     ).join('\n\n---\n\n');
 
-    // 4. بناء قائمة المصادر
+    // 6. بناء قائمة المصادر الفريدة
     const sources = allContexts.map(c => ({
       book: c.book,
       page: c.page,
@@ -85,48 +113,136 @@ class RAGEngine {
       arr.findIndex(x => x.book === s.book && x.page === s.page) === i
     );
 
-    // 5. إذا لم يكن هناك LLM، إرجاع السياق مباشرة مع تنسيق ذكي
+    // 7. إذا لم يكن هناك LLM، إرجاع السياق مباشرة
     if (!this.initialized) {
       console.log('⚠️ LLM غير متاح - استخدام الإجابة المباشرة');
       return this.formatDirectResponse(question, allContexts);
     }
 
-    // 6. استدعاء النموذج
+    // 8. استدعاء النموذج مع التحقق المزدوج
     try {
-      console.log('🤖 إرسال للنموذج...');
+      console.log('🤖 المرحلة 1: توليد الإجابة الأولية...');
       const response = await this.llm.invoke([
-        {
-          role: 'system',
-          content: this.getSystemPrompt(),
-        },
-        {
-          role: 'user',
-          content: this.buildUserPrompt(question, contextText),
-        },
+        { role: 'system', content: this.getSystemPrompt() },
+        { role: 'user', content: this.buildUserPrompt(question, contextText) },
       ]);
 
-      const answer = response.content;
-      console.log(`✅ تم الحصول على إجابة (${answer.length} حرف)`);
+      const initialAnswer = response.content;
+      console.log(`📝 الإجابة الأولية (${initialAnswer.length} حرف)`);
 
-      // إذا كانت الإجابة اعتذار، نرجعها مباشرة أو ننسقها بشكل لائق
-      if (this.isRefusalAnswer(answer)) {
-        console.log('⚠️ النموذج أبلغ بعدم وجود الإجابة في السياق.');
+      // إذا كانت الإجابة اعتذار
+      if (this.isRefusalAnswer(initialAnswer)) {
+        console.log('⚠️ النموذج رفض الإجابة - محاولة ثانية بتعليمات أقوى...');
+        // محاولة ثانية بتعليمات أقوى
+        const retryResponse = await this.llm.invoke([
+          { role: 'system', content: this.getStrictRetryPrompt() },
+          { role: 'user', content: this.buildRetryPrompt(question, contextText) },
+        ]);
+        const retryAnswer = retryResponse.content;
+        if (!this.isRefusalAnswer(retryAnswer)) {
+          // تحقق من الإجابة الثانية
+          const verified = await this.verifyAnswer(question, retryAnswer, contextText);
+          return {
+            answer: verified,
+            sources: uniqueSources,
+            confidence: 'medium',
+          };
+        }
         return {
-          answer: 'عذراً، بعد البحث الدقيق في الكتب المتاحة، لم أتمكن من العثور على إجابة دقيقة لسؤالك. يرجى محاولة صياغة السؤال بشكل مختلف أو استخدام كلمات مفتاحية أخرى.',
+          answer: 'عذراً، بعد البحث المعمق في جميع الكتب المتاحة، لم أتمكن من العثور على إجابة دقيقة لسؤالك. يرجى محاولة صياغة السؤال بشكل مختلف.',
           sources: [],
           confidence: 'none',
         };
       }
 
+      // 9. التحقق من صحة الإجابة
+      console.log('🔎 المرحلة 2: التحقق من دقة الإجابة...');
+      const verifiedAnswer = await this.verifyAnswer(question, initialAnswer, contextText);
+
       return {
-        answer,
+        answer: verifiedAnswer,
         sources: uniqueSources,
-        confidence: allContexts.length > 3 ? 'high' : 'medium',
+        confidence: allContexts.length > 5 ? 'high' : 'medium',
       };
     } catch (error) {
       console.error('خطأ في استدعاء النموذج:', error.message);
       return this.formatDirectResponse(question, allContexts);
     }
+  }
+
+  /**
+   * التحقق من دقة الإجابة - المرحلة الثانية
+   */
+  async verifyAnswer(question, answer, contextText) {
+    try {
+      const verifyResponse = await this.verifierLlm.invoke([
+        {
+          role: 'system',
+          content: `أنت مدقق علمي صارم. مهمتك فحص إجابة تم توليدها والتأكد من أن كل معلومة فيها موجودة فعلاً في النصوص المرفقة.
+
+قواعد التدقيق:
+1. تحقق أن كل حكم شرعي مذكور في الإجابة موجود في النصوص المرفقة.
+2. تحقق أن أرقام الصفحات وأسماء الكتب صحيحة ومطابقة للنصوص.
+3. تحقق أن الآيات والأحاديث المذكورة موجودة في النصوص وليست مضافة من الخارج.
+4. إذا وجدت معلومة في الإجابة غير موجودة في النصوص، احذفها.
+5. إذا وجدت معلومة مهمة في النصوص لم تُذكر في الإجابة، أضفها.
+6. أعد صياغة الإجابة المصححة كاملة بنفس الأسلوب والتنسيق.
+7. لا تضف أي شيء من عندك - فقط ما هو موجود في النصوص.`
+        },
+        {
+          role: 'user',
+          content: `السؤال الأصلي: ${question}
+
+الإجابة المراد تدقيقها:
+${answer}
+
+━━━━━━━━ النصوص المصدرية ━━━━━━━━
+${contextText}
+━━━━━━━━ نهاية النصوص ━━━━━━━━
+
+أعد الإجابة بعد التدقيق والتصحيح. إذا كانت الإجابة صحيحة بالكامل، أعدها كما هي مع أي إضافات مفيدة من النصوص.`
+        },
+      ]);
+      console.log('✅ تم التحقق من الإجابة بنجاح');
+      return verifyResponse.content;
+    } catch (error) {
+      console.error('⚠️ خطأ في التحقق، إرجاع الإجابة الأولية:', error.message);
+      return answer;
+    }
+  }
+
+  /**
+   * استخراج كلمات مفتاحية بديلة من السؤال لتوسيع البحث
+   */
+  extractAlternativeKeywords(question) {
+    const synonymMap = {
+      'شروط': 'أركان واجبات فروض',
+      'أركان': 'شروط فروض واجبات',
+      'فروض': 'أركان شروط واجبات',
+      'حكم': 'حكمه يجوز يحرم يستحب مسألة',
+      'صلاة': 'الصلاة صلاته يصلي مصلي',
+      'زكاة': 'الزكاة زكاته يزكي',
+      'صيام': 'الصيام صومه يصوم صائم',
+      'حج': 'الحج حجه يحج حاج',
+      'وضوء': 'الوضوء توضأ يتوضأ',
+      'طهارة': 'الطهارة تطهر طاهر نجاسة',
+      'نكاح': 'الزواج نكاح زوج تزويج',
+      'طلاق': 'الطلاق طلق يطلق مطلقة',
+      'بيع': 'البيع شراء يبيع بائع',
+      'ربا': 'الربا ربوي فائدة',
+      'دليل': 'الدليل الأدلة لقوله لحديث برهان',
+    };
+    const words = question.replace(/[؟?!،,.]/g, '').split(/\s+/);
+    const alternatives = [];
+    for (const word of words) {
+      const clean = word.replace(/[ال]/g, '');
+      for (const [key, val] of Object.entries(synonymMap)) {
+        if (word.includes(key) || key.includes(word)) {
+          alternatives.push(val);
+        }
+      }
+    }
+    return alternatives.length > 0 ? alternatives.join(' ') : null;
   }
 
   /**
@@ -152,10 +268,6 @@ class RAGEngine {
   }
 
   /**
-   * تم إزالة دالة إعادة المحاولة القسرية لأنها تسبب الهلوسة
-   */
-
-  /**
    * بناء الـ prompt للمستخدم
    */
   buildUserPrompt(question, contextText) {
@@ -168,12 +280,34 @@ ${contextText}
 ━━━━━━━━ نهاية النصوص ━━━━━━━━
 
 التعليمات الصارمة جداً:
-1. اقرأ كل النصوص أعلاه بدقة وتأنٍ وتأكد من محتواها مرتين على الأقل.
-2. استخرج كل معلومة مفيدة تجدها في هذه النصوص تتعلق بالسؤال ورتبها بشكل تفصيلي وشامل، حتى لو كانت النصوص متفرقة أو جزئية. 
-3. إياك أن تتجاهل أو تختصر الإجابة، بل اجمع كل الفوائد والأحكام والأقوال المذكورة.
-4. يمنع منعاً باتاً اختراع أو استنتاج أي معلومة من خارج النصوص المرفقة. استخدم المعاني الموجودة فقط.
-5. تأكد من إسناد كل معلومة تذكرها إلى اسم الكتاب ورقم الصفحة الصحيح تماماً كما هو موجود في النص المرفق. لا تخمن أرقام الصفحات.
-6. صِغ إجابة واضحة ومفصّلة ومقنعة تشمل: الحكم الشرعي، الأدلة، أقوال العلماء المستخرجة فقط من النصوص.`;
+1. اقرأ كل النصوص أعلاه كلمة كلمة بتأنٍ شديد. لا تتسرع.
+2. أعد قراءة النصوص مرة ثانية وتأكد أنك لم تفوّت أي معلومة متعلقة بالسؤال.
+3. استخرج كل معلومة مفيدة تجدها في هذه النصوص تتعلق بالسؤال، حتى لو كانت جزئية أو متفرقة.
+4. رتب المعلومات بشكل تفصيلي وشامل مع ذكر الحكم والدليل والمصدر.
+5. يمنع منعاً باتاً اختراع أو استنتاج أي معلومة من خارج النصوص المرفقة.
+6. تأكد من إسناد كل معلومة إلى اسم الكتاب ورقم الصفحة الصحيح كما هو مذكور في النص.
+7. لا تخمن أرقام الصفحات أبداً - استخدم فقط ما هو مكتوب في المصدر.
+8. صِغ إجابة واضحة ومفصّلة تشمل: الحكم الشرعي، الأدلة، أقوال العلماء (من النصوص فقط).`;
+  }
+
+  /**
+   * prompt إعادة المحاولة بتعليمات أقوى
+   */
+  getStrictRetryPrompt() {
+    return `أنت باحث متخصص في النصوص الشرعية. لديك نصوص مسترجعة من كتب شرعية وعليك الإجابة منها فقط.
+
+القاعدة الوحيدة: أي معلومة موجودة في النصوص المرفقة ولها علاقة بالسؤال يجب ذكرها وتنظيمها. لا تقل "لم أجد" إلا إذا كانت النصوص كلها لا علاقة لها بالسؤال إطلاقاً.
+
+حتى لو كانت المعلومات جزئية أو غير مباشرة، اجمعها وقدمها بشكل مفيد مع ذكر المصدر.`;
+  }
+
+  buildRetryPrompt(question, contextText) {
+    return `السؤال: ${question}
+
+النصوص المتوفرة:
+${contextText}
+
+المطلوب: اقرأ النصوص بعناية فائقة واستخرج كل ما يتعلق بالسؤال مع ذكر المصدر ورقم الصفحة. قدم إجابة شاملة ومنظمة.`;
   }
 
   /**
@@ -182,7 +316,7 @@ ${contextText}
   async summarize(bookId, chapter) {
     const contexts = await vectorStore.search(
       `${chapter} تلخيص`,
-      { nResults: 15, bookId }
+      { nResults: 20, bookId }
     );
 
     if (contexts.length === 0) {
@@ -232,7 +366,7 @@ ${contextText}
 
     for (const bId of bookIds) {
       const results = await vectorStore.search(topic, {
-        nResults: 8,
+        nResults: 15,
         bookId: bId,
       });
       allResults.push(...results);
@@ -329,24 +463,26 @@ ${contextText}
   }
 
   /**
-   * التعليمات الأساسية للنموذج - صارمة وتمنع الهلوسة
+   * التعليمات الأساسية للنموذج - صارمة وتمنع الهلوسة مع التحقق المتعدد
    */
   getSystemPrompt() {
     return `أنت عالم شرعي متخصص ومساعد بحثي دقيق جداً. مهمتك هي الإجابة على الأسئلة الدينية بالاعتماد **حصراً وفقط** على النصوص المسترجعة من كتب العلم الشرعي المرفقة لك.
 
-## قواعد صارمة جداً (يمنع مخالفتها):
-1. **الشمولية من السياق فقط**: لا تستخدم أبداً معلوماتك السابقة للرد، لكن في الوقت نفسه لا تبخل في جمع كل التفاصيل المفيدة المذكورة في النصوص المرفقة.
-2. **التحقق المزدوج**: اقرأ النصوص جيداً وتأكد مرتين أن الإجابة التي تصيغها مفصلة ومطابقة تماماً للمعنى المذكور في النص.
-3. **لا تتسرع بالاعتذار**: النصوص المرفقة غالباً تحتوي على الإجابة أو أجزاء منها. اجمع هذه الأجزاء ورتبها بشكل مفيد للقارئ ولا تقل "لا أعلم" إلا إذا كانت النصوص لا تمت للسؤال بصلة إطلاقاً.
-4. **التوثيق الدقيق للمصادر**: كل فقرة تكتبها يجب أن يرافقها التوثيق الدقيق (اسم الكتاب ورقم الصفحة) المذكورين في النص المرفق قبل المحتوى مباشرة. تحقق جيداً من رقم الصفحة ولا تخلط بين الكتب.
+## قواعد صارمة (يمنع مخالفتها مطلقاً):
+1. **لا تستخدم أبداً معلوماتك السابقة**: كل حرف في إجابتك يجب أن يكون مستخرجاً من النصوص المرفقة فقط.
+2. **اقرأ النصوص مرتين على الأقل**: في المرة الأولى افهم المحتوى العام، وفي المرة الثانية استخرج التفاصيل الدقيقة.
+3. **لا تتسرع بالاعتذار أبداً**: النصوص المرفقة غالباً تحتوي على الإجابة أو أجزاء منها. اجمع كل الأجزاء المتعلقة بالسؤال ورتبها. لا تقل "لا أعلم" إلا إذا كانت كل النصوص لا علاقة لها بالسؤال إطلاقاً.
+4. **التوثيق الدقيق**: كل معلومة تذكرها يجب أن ترافقها [اسم الكتاب، الصفحة X] مأخوذة من النص المرفق مباشرة. لا تخمن الأرقام.
+5. **الشمولية**: اجمع كل الفوائد والأحكام والأقوال من جميع النصوص المرفقة، لا تكتفِ بنص واحد.
+6. **التحقق الذاتي**: قبل إرسال إجابتك، راجعها وتأكد أن كل معلومة فيها لها مصدر في النصوص المرفقة.
 
-## كيف تجيب (بناء على النصوص المرفقة فقط):
-- **الحكم الشرعي**: ما هو الحكم الموجود في النص.
-- **الأدلة**: الآيات والأحاديث المذكورة في النص حصراً.
-- **أقوال العلماء والتفصيل**: اذكر الآراء باختصار ودون إطالة لتسريع الاستجابة.
-- **المصدر**: [اسم الكتاب، الصفحة X] في نهاية كل معلومة.
+## هيكل الإجابة:
+- **الحكم الشرعي**: ما هو الحكم الموجود في النصوص.
+- **الأدلة**: الآيات والأحاديث المذكورة في النصوص حصراً.
+- **أقوال العلماء**: الآراء المذكورة في النصوص مع نسبتها لأصحابها.
+- **المصدر**: [اسم الكتاب، الصفحة X] بعد كل معلومة.
 
-أنت مساعد موثوق، وهدفك تقديم إجابة تفصيلية مجمّعة وواضحة جداً للقارئ، مستنبطة تماماً وبدون أي إضافة خارجية من النصوص المرفقة. أجب بالعربية الفصحى.`;
+أجب بالعربية الفصحى بشكل مفصّل وشامل.`;
   }
 }
 

@@ -53,14 +53,17 @@ router.get('/advanced-search', async (req, res) => {
     const { q: query, bookId, type } = req.query;
     if (!query) return res.json([]);
 
+    console.log(`🔎 بحث متقدم: "${query}" | النوع: ${type || 'thematic'} | الكتاب: ${bookId || 'الكل'}`);
+
     const vectorStore = require('../services/vectorStore');
     const options = {
-      nResults: 50,
+      nResults: 60,
       bookId: bookId || null,
-      searchType: type || 'thematic' // 'exact', 'root', 'thematic'
+      searchType: type || 'thematic'
     };
 
     const results = await vectorStore.search(query, options);
+    console.log(`📊 نتائج البحث المتقدم: ${results.length}`);
     res.json(results);
   } catch (error) {
     console.error('Advanced search error:', error.message);

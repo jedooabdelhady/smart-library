@@ -4,6 +4,7 @@ require('dotenv').config();
 /**
  * إدارة البحث النصي في قاعدة البيانات (بديل عن ChromaDB)
  * يعمل مباشرة مع TiDB/MySQL بدون خدمات خارجية
+ * محسّن للبحث الشامل والدقيق في الكتب الدينية
  */
 class VectorStore {
   constructor() {
@@ -35,13 +36,14 @@ class VectorStore {
   }
 
   /**
-   * البحث النصي في الكتب باستخدام SQL LIKE
+   * البحث النصي الشامل في الكتب باستخدام SQL
+   * استراتيجية بحث متعددة المستويات للدقة القصوى
    */
   async search(query, options = {}) {
     if (!this.initialized) return [];
 
     try {
-      const nResults = options.nResults || 8;
+      const nResults = options.nResults || 15;
       const bookId = options.bookId || null;
 
       // ── مرادفات المصطلحات الفقهية ──
@@ -54,13 +56,17 @@ class VectorStore {
         'دليل':    ['دليل', 'دليله', 'الدليل', 'الأدلة', 'لقوله', 'لحديث'],
         'أقسام':   ['أقسام', 'أنواع', 'أصناف'],
         'أنواع':   ['أنواع', 'أقسام', 'أصناف'],
+        'سنن':     ['سنن', 'سنة', 'مستحب', 'مستحبات', 'مندوب'],
+        'مكروه':   ['مكروه', 'مكروهات', 'يكره'],
+        'مبطلات':  ['مبطلات', 'نواقض', 'يبطل', 'ينقض'],
+        'نواقض':   ['نواقض', 'مبطلات', 'ينقض', 'يبطل'],
       };
 
       // Strip diacritics for better Arabic search
       const stripDiacritics = (s) => s.replace(/[\u064B-\u065F\u0670\u0640]/g, '');
       const cleanQuery = stripDiacritics(query);
 
-      // Extract keywords
+      // Extract keywords - improved stop word list
       const stopWords = new Set([
         'ما', 'هي', 'هو', 'في', 'من', 'إلى', 'على', 'عن', 'مع', 'أو', 'هل', 'كم',
         'متى', 'أين', 'كيف', 'لماذا', 'ماذا', 'التي', 'الذي', 'ذلك', 'هذا', 'هذه',
@@ -93,7 +99,7 @@ class VectorStore {
         id: `sql_${row.book_id}_${row.page_start}`,
       }));
 
-      const runQuery = async (conditions, params, scoreExpr = null, scoreParams = []) => {
+      const runQuery = async (conditions, params, scoreExpr = null, scoreParams = [], limit = nResults) => {
         let sql = `
           SELECT tc.content, tc.page_start, tc.page_end, tc.book_id,
                  b.title as book_title, b.author as book_author
@@ -113,7 +119,7 @@ class VectorStore {
         if (scoreExpr) {
           sql += ` ORDER BY score DESC`;
         }
-        sql += ` LIMIT ${nResults}`;
+        sql += ` LIMIT ${limit}`;
         const [rows] = await pool.execute(sql, finalParams);
         return rows;
       };
@@ -132,10 +138,14 @@ class VectorStore {
         }
       }
 
-      // Build scoring expression
+      // Build scoring expression with higher weights
       const scoreExprs = [];
       const scoreParams = [];
       
+      // Full query match gets highest score
+      scoreExprs.push(`(${col} LIKE ?) * 10`);
+      scoreParams.push(`%${cleanQuery}%`);
+
       exactPhrases.forEach(p => {
         scoreExprs.push(`(${col} LIKE ?) * 5`);
         scoreParams.push(`%${p}%`);
@@ -161,38 +171,68 @@ class VectorStore {
         return mapRows(exactRows);
       }
 
-      // ── 1: كل الكلمات (AND) ──
-      const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
-      const andParams = keywords.map(k => `%${k}%`);
-      const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams);
-      
-      // إذا كان البحث 'root' (جذر/كلمات مفتاحية) نكتفي بالـ AND
-      if (searchType === 'root' && andRows.length > 0) {
-        return mapRows(andRows);
-      } else if (searchType === 'root' && andRows.length === 0) {
-        // Fallback to OR if no AND found in root search
+      // ── بحث بالجذر (Root) ──
+      if (searchType === 'root') {
+        // AND first
+        const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
+        const andParams = keywords.map(k => `%${k}%`);
+        const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams);
+        if (andRows.length > 0) return mapRows(andRows);
+        // Fallback to OR
         const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
         const orParams = keywords.map(k => `%${k}%`);
         const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams);
         return mapRows(orRows);
       }
 
-      // ── بحث موضوعي (Thematic - Default) ──
-      if (andRows.length > 0) return mapRows(andRows);
+      // ── بحث موضوعي (Thematic - Default) - بحث شامل متعدد المستويات ──
+      const allResults = [];
+      const seenIds = new Set();
 
-      // ── 2: العبارات المتجاورة (OR) ──
-      if (exactPhrases.length > 0) {
+      const addUnique = (rows) => {
+        for (const row of rows) {
+          const key = `${row.book_id}_${row.page_start}`;
+          if (!seenIds.has(key)) {
+            seenIds.add(key);
+            allResults.push(row);
+          }
+        }
+      };
+
+      // المستوى 1: كل الكلمات معاً (AND) - الأعلى دقة
+      const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
+      const andParams = keywords.map(k => `%${k}%`);
+      const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams, nResults);
+      addUnique(andRows);
+
+      // المستوى 2: العبارات المتجاورة
+      if (exactPhrases.length > 0 && allResults.length < nResults) {
         const exactConditions = exactPhrases.map(() => `${col} LIKE ?`).join(' OR ');
         const exactParams = exactPhrases.map(p => `%${p}%`);
-        const exactRows = await runQuery(exactConditions, exactParams, scoreSql, scoreParams);
-        if (exactRows.length > 0) return mapRows(exactRows);
+        const remaining = nResults - allResults.length;
+        const exactRows = await runQuery(exactConditions, exactParams, scoreSql, scoreParams, remaining + 5);
+        addUnique(exactRows);
       }
 
-      // ── 3: أي كلمة (OR) ──
-      const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
-      const orParams = keywords.map(k => `%${k}%`);
-      const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams);
-      return mapRows(orRows);
+      // المستوى 3: المرادفات الفقهية
+      if (synonymPhrases.length > 0 && allResults.length < nResults) {
+        const synConditions = synonymPhrases.map(() => `${col} LIKE ?`).join(' OR ');
+        const synParams = synonymPhrases.map(p => `%${p}%`);
+        const remaining = nResults - allResults.length;
+        const synRows = await runQuery(synConditions, synParams, scoreSql, scoreParams, remaining + 5);
+        addUnique(synRows);
+      }
+
+      // المستوى 4: أي كلمة (OR) - لملء النتائج إذا لم تكفِ
+      if (allResults.length < nResults) {
+        const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
+        const orParams = keywords.map(k => `%${k}%`);
+        const remaining = nResults - allResults.length;
+        const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams, remaining + 5);
+        addUnique(orRows);
+      }
+
+      return mapRows(allResults.slice(0, nResults));
 
     } catch (error) {
       console.error('خطأ في البحث النصي:', error.message);
