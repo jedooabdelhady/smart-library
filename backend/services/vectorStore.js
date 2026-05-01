@@ -80,7 +80,11 @@ class VectorStore {
       const keywords = cleanQuery
         .replace(/[؟?!،,.]/g, '')
         .split(/\s+/)
-        .filter(w => w.length >= 2 && !stopWords.has(w));
+        .filter(w => w.length >= 2 && !stopWords.has(w))
+        .map(w => w.replace(/^(ال|وال|بال|فال|كال|لل)/, ''));
+
+      // Re-filter empty strings in case a stop word slipped through or prefix removal made it empty
+      const finalKeywords = keywords.filter(w => w.length >= 2);
 
       const col = 'IFNULL(tc.content_clean, tc.content)';
 
@@ -125,12 +129,12 @@ class VectorStore {
       const exactPhrases = [];
       const synonymPhrases = [];
       
-      if (keywords.length >= 2) {
-        for (let i = 0; i < keywords.length - 1; i++) {
-          exactPhrases.push(`${keywords[i]} ${keywords[i + 1]}`);
+      if (finalKeywords.length >= 2) {
+        for (let i = 0; i < finalKeywords.length - 1; i++) {
+          exactPhrases.push(`${finalKeywords[i]} ${finalKeywords[i + 1]}`);
           
-          const w1 = keywords[i];
-          const w2 = keywords[i + 1];
+          const w1 = finalKeywords[i];
+          const w2 = finalKeywords[i + 1];
           if (fiqhSynonyms[w1]) for (const syn of fiqhSynonyms[w1]) synonymPhrases.push(`${syn} ${w2}`);
           if (fiqhSynonyms[w2]) for (const syn of fiqhSynonyms[w2]) synonymPhrases.push(`${w1} ${syn}`);
         }
@@ -154,7 +158,7 @@ class VectorStore {
         scoreParams.push(`%${p}%`);
       });
       
-      keywords.forEach(k => {
+      finalKeywords.forEach(k => {
         scoreExprs.push(`(${col} LIKE ?) * 1`);
         scoreParams.push(`%${k}%`);
       });
@@ -169,18 +173,18 @@ class VectorStore {
         return mapRows(exactRows);
       }
 
-      if (keywords.length === 0) return [];
+      if (finalKeywords.length === 0) return [];
 
       // ── بحث بالجذر (Root) ──
       if (searchType === 'root') {
         // AND first
-        const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
-        const andParams = keywords.map(k => `%${k}%`);
+        const andConditions = finalKeywords.map(() => `${col} LIKE ?`).join(' AND ');
+        const andParams = finalKeywords.map(k => `%${k}%`);
         const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams);
         if (andRows.length > 0) return mapRows(andRows);
         // Fallback to OR
-        const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
-        const orParams = keywords.map(k => `%${k}%`);
+        const orConditions = finalKeywords.map(() => `${col} LIKE ?`).join(' OR ');
+        const orParams = finalKeywords.map(k => `%${k}%`);
         const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams);
         return mapRows(orRows);
       }
@@ -200,8 +204,8 @@ class VectorStore {
       };
 
       // المستوى 1: كل الكلمات معاً (AND) - الأعلى دقة
-      const andConditions = keywords.map(() => `${col} LIKE ?`).join(' AND ');
-      const andParams = keywords.map(k => `%${k}%`);
+      const andConditions = finalKeywords.map(() => `${col} LIKE ?`).join(' AND ');
+      const andParams = finalKeywords.map(k => `%${k}%`);
       const andRows = await runQuery(andConditions, andParams, scoreSql, scoreParams, nResults);
       addUnique(andRows);
 
@@ -225,8 +229,8 @@ class VectorStore {
 
       // المستوى 4: أي كلمة (OR) - لملء النتائج إذا لم تكفِ
       if (allResults.length < nResults) {
-        const orConditions = keywords.map(() => `${col} LIKE ?`).join(' OR ');
-        const orParams = keywords.map(k => `%${k}%`);
+        const orConditions = finalKeywords.map(() => `${col} LIKE ?`).join(' OR ');
+        const orParams = finalKeywords.map(k => `%${k}%`);
         const remaining = nResults - allResults.length;
         const orRows = await runQuery(orConditions, orParams, scoreSql, scoreParams, remaining + 5);
         addUnique(orRows);

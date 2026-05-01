@@ -55,7 +55,7 @@ class RAGEngine {
 
     // 1. استرجاع سياق واسع من قاعدة البيانات - بحث شامل في الكتب
     const contexts = await vectorStore.search(question, {
-      nResults: 20, // Reduced from 30 to optimize speed and avoid timeout
+      nResults: 40, // Expanded to search deeper as requested
       bookId,
     });
 
@@ -64,7 +64,7 @@ class RAGEngine {
     let extraContexts = [];
     if (altKeywords) {
       extraContexts = await vectorStore.search(altKeywords, {
-        nResults: 10, // Reduced from 15
+        nResults: 20, // Expanded to fetch more synonyms
         bookId,
       });
     }
@@ -185,14 +185,13 @@ class RAGEngine {
           role: 'system',
           content: `أنت مدقق علمي صارم. مهمتك فحص إجابة تم توليدها والتأكد من أن كل معلومة فيها موجودة فعلاً في النصوص المرفقة.
 
-قواعد التدقيق:
-1. تحقق أن كل حكم شرعي مذكور في الإجابة موجود في النصوص المرفقة.
-2. تحقق أن أرقام الصفحات وأسماء الكتب صحيحة ومطابقة للنصوص.
-3. تحقق أن الآيات والأحاديث المذكورة موجودة في النصوص وليست مضافة من الخارج.
-4. إذا وجدت معلومة في الإجابة غير موجودة في النصوص، احذفها.
-5. إذا وجدت معلومة مهمة في النصوص لم تُذكر في الإجابة، أضفها.
-6. أعد صياغة الإجابة المصححة كاملة بنفس الأسلوب والتنسيق.
-7. لا تضف أي شيء من عندك - فقط ما هو موجود في النصوص.`
+قواعد التدقيق الصارمة جداً:
+1. راجع كل جملة في الإجابة، إذا لم تجد لها أصلاً صريحاً في النصوص المرفقة، فاحذفها فوراً وبدون تردد.
+2. لا تضف أي شرح أو استنتاج من مخزونك المعرفي، التزم فقط بما هو مكتوب في المرفقات.
+3. تحقق من أرقام الصفحات وأسماء الكتب بدقة متناهية ولا تنسب قولاً في صفحة لصفحة أخرى.
+4. إذا لاحظت أن الإجابة تجاهلت تفاصيل هامة (شروط، موانع، استثناءات) موجودة في النصوص وتتعلق بالسؤال، أضفها لتكون الإجابة شاملة.
+5. أعد صياغة الإجابة المصححة كاملة بنفس التنسيق.
+6. إذا كانت الإجابة الأولية كلها هلوسة وليس لها أصل، اكتب: "عذراً، لا توجد إجابة دقيقة في النصوص المرفقة."`
         },
         {
           role: 'user',
@@ -240,9 +239,9 @@ ${contextText}
     const words = question.replace(/[؟?!،,.]/g, '').split(/\s+/);
     const alternatives = [];
     for (const word of words) {
-      const clean = word.replace(/[ال]/g, '');
+      const clean = word.replace(/^(ال|وال|بال|فال|كال|لل)/, '');
       for (const [key, val] of Object.entries(synonymMap)) {
-        if (word.includes(key) || key.includes(word)) {
+        if (clean.includes(key) || key.includes(clean)) {
           alternatives.push(val);
         }
       }
