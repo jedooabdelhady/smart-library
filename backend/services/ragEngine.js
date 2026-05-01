@@ -53,10 +53,11 @@ class RAGEngine {
   async answer(question, bookId = null) {
     console.log(`\n🔍 سؤال جديد: "${question}"`);
 
-    // 1. استرجاع سياق واسع من قاعدة البيانات - بحث شامل في الكتب
+    // 1. استرجاع سياق من قاعدة البيانات - بحث بالجذر (سريع)
     const contexts = await vectorStore.search(question, {
-      nResults: 15, // Reduced to prevent timeouts
+      nResults: 15,
       bookId,
+      searchType: 'root',
     });
 
     // 2. بحث إضافي بكلمات مفتاحية بديلة للتأكد من عدم فقدان أي نتيجة
@@ -64,8 +65,9 @@ class RAGEngine {
     let extraContexts = [];
     if (altKeywords) {
       extraContexts = await vectorStore.search(altKeywords, {
-        nResults: 10, // Reduced to prevent timeouts
+        nResults: 10,
         bookId,
+        searchType: 'root',
       });
     }
 
@@ -129,52 +131,83 @@ class RAGEngine {
       };
     }
 
-    // 8. استدعاء النموذج مع التحقق المزدوج
+    // 8. استدعاء النموذج مع حماية من التأخير
     try {
       console.log('🤖 المرحلة 1: توليد الإجابة الأولية...');
-      const response = await this.llm.invoke([
+
+      // حماية من التأخير: 55 ثانية كحد أقصى لكل استدعاء
+      const withTimeout = (promise, ms = 55000) => {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('LLM_TIMEOUT')), ms)),
+        ]);
+      };
+
+      const response = await withTimeout(this.llm.invoke([
         { role: 'system', content: this.getSystemPrompt() },
         { role: 'user', content: this.buildUserPrompt(question, contextText) },
-      ]);
+      ]));
 
       const initialAnswer = response.content;
       console.log(`📝 الإجابة الأولية (${initialAnswer.length} حرف)`);
 
-      // إذا كانت الإجابة اعتذار
+      // إذا كانت الإجابة اعتذار - محاولة ثانية بتعليمات أقوى
       if (this.isRefusalAnswer(initialAnswer)) {
         console.log('⚠️ النموذج رفض الإجابة - محاولة ثانية بتعليمات أقوى...');
-        // محاولة ثانية بتعليمات أقوى
-        const retryResponse = await this.llm.invoke([
-          { role: 'system', content: this.getStrictRetryPrompt() },
-          { role: 'user', content: this.buildRetryPrompt(question, contextText) },
-        ]);
-        const retryAnswer = retryResponse.content;
-        if (!this.isRefusalAnswer(retryAnswer)) {
-          return {
-            answer: retryAnswer,
-            sources: uniqueSources,
-            confidence: 'medium',
-          };
+        try {
+          const retryResponse = await withTimeout(this.llm.invoke([
+            { role: 'system', content: this.getStrictRetryPrompt() },
+            { role: 'user', content: this.buildRetryPrompt(question, contextText) },
+          ]), 40000);
+          const retryAnswer = retryResponse.content;
+          if (!this.isRefusalAnswer(retryAnswer)) {
+            return {
+              answer: retryAnswer,
+              sources: uniqueSources,
+              confidence: 'medium',
+            };
+          }
+        } catch (retryErr) {
+          console.error('⚠️ فشل المحاولة الثانية:', retryErr.message);
         }
+        // إرجاع النتائج المباشرة بدلاً من الاعتذار
+        const direct = this.formatDirectResponse(question, allContexts);
         return {
-          answer: 'عذراً، بعد البحث المعمق في جميع الكتب المتاحة، لم أتمكن من العثور على إجابة دقيقة لسؤالك. يرجى محاولة صياغة السؤال بشكل مختلف.',
-          sources: [],
-          confidence: 'none',
+          answer: direct.answer,
+          sources: direct.sources,
+          confidence: 'direct',
         };
       }
 
-      // 9. التحقق من صحة الإجابة
-      console.log('🔎 المرحلة 2: التحقق من دقة الإجابة...');
-      const verifiedAnswer = await this.verifyAnswer(question, initialAnswer, contextText);
-
-      return {
-        answer: verifiedAnswer,
-        sources: uniqueSources,
-        confidence: allContexts.length > 5 ? 'high' : 'medium',
-      };
+      // 9. التحقق - فقط إذا بقي وقت كافٍ
+      try {
+        console.log('🔎 المرحلة 2: التحقق من دقة الإجابة...');
+        const verifiedAnswer = await withTimeout(
+          this.verifyAnswer(question, initialAnswer, contextText),
+          30000
+        );
+        return {
+          answer: verifiedAnswer,
+          sources: uniqueSources,
+          confidence: allContexts.length > 5 ? 'high' : 'medium',
+        };
+      } catch (verifyErr) {
+        console.log('⚠️ التحقق استغرق وقتاً طويلاً، إرجاع الإجابة الأولية');
+        return {
+          answer: initialAnswer,
+          sources: uniqueSources,
+          confidence: allContexts.length > 5 ? 'high' : 'medium',
+        };
+      }
     } catch (error) {
       console.error('خطأ في استدعاء النموذج:', error.message);
-      return this.formatDirectResponse(question, allContexts);
+      // إرجاع النتائج المباشرة من الكتب
+      const direct = this.formatDirectResponse(question, allContexts);
+      return {
+        answer: direct.answer,
+        sources: direct.sources,
+        confidence: 'direct',
+      };
     }
   }
 
