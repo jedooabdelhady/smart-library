@@ -80,9 +80,7 @@ class VectorStore {
       const keywords = cleanQuery
         .replace(/[؟?!،,.]/g, '')
         .split(/\s+/)
-        .filter(w => w.length > 2 && !stopWords.has(w));
-
-      if (keywords.length === 0) return [];
+        .filter(w => w.length >= 2 && !stopWords.has(w));
 
       const col = 'IFNULL(tc.content_clean, tc.content)';
 
@@ -167,9 +165,11 @@ class VectorStore {
 
       // ── تطابق تام (Exact Match) ──
       if (searchType === 'exact') {
-        const exactRows = await runQuery(`${col} LIKE ?`, [`%${cleanQuery}%`], scoreSql, scoreParams);
+        const exactRows = await runQuery(`${col} LIKE ?`, [`%${cleanQuery}%`], scoreSql || '1', scoreSql ? scoreParams : []);
         return mapRows(exactRows);
       }
+
+      if (keywords.length === 0) return [];
 
       // ── بحث بالجذر (Root) ──
       if (searchType === 'root') {

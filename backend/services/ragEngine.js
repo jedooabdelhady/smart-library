@@ -55,7 +55,7 @@ class RAGEngine {
 
     // 1. استرجاع سياق واسع من قاعدة البيانات - بحث شامل في الكتب
     const contexts = await vectorStore.search(question, {
-      nResults: 30,
+      nResults: 20, // Reduced from 30 to optimize speed and avoid timeout
       bookId,
     });
 
@@ -64,7 +64,7 @@ class RAGEngine {
     let extraContexts = [];
     if (altKeywords) {
       extraContexts = await vectorStore.search(altKeywords, {
-        nResults: 15,
+        nResults: 10, // Reduced from 15
         bookId,
       });
     }
@@ -113,10 +113,15 @@ class RAGEngine {
       arr.findIndex(x => x.book === s.book && x.page === s.page) === i
     );
 
-    // 7. إذا لم يكن هناك LLM، إرجاع السياق مباشرة
+    // 7. إذا لم يكن هناك LLM، إرجاع رسالة تنبيه واضحة بالإضافة للنتائج المباشرة
     if (!this.initialized) {
       console.log('⚠️ LLM غير متاح - استخدام الإجابة المباشرة');
-      return this.formatDirectResponse(question, allContexts);
+      const direct = this.formatDirectResponse(question, allContexts);
+      return {
+        answer: `⚠️ **تنبيه:** محرك الذكاء الاصطناعي معطل حالياً (مفتاح OpenAI غير متوفر في الخادم).\n\nبناءً على البحث النصي العادي، إليك بعض النصوص التي قد تفيدك:\n\n${direct.answer}`,
+        sources: direct.sources,
+        confidence: 'direct',
+      };
     }
 
     // 8. استدعاء النموذج مع التحقق المزدوج
