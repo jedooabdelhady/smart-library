@@ -50,10 +50,11 @@ router.post('/', async (req, res) => {
     });
   } catch (error) {
     console.error('خطأ في المحادثة:', error);
-    res.status(500).json({
-      error: 'حدث خطأ في معالجة السؤال',
-      answer: 'عذراً، حدث خطأ تقني. يرجى المحاولة مرة أخرى.',
+    res.json({
+      answer: 'عذراً، حدث خطأ تقني في معالجة طلبك: ' + error.message,
       sources: [],
+      confidence: 0,
+      sessionId: req.body.sessionId || '',
     });
   }
 });

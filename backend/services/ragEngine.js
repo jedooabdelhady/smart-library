@@ -55,7 +55,7 @@ class RAGEngine {
 
     // 1. استرجاع سياق واسع من قاعدة البيانات - بحث شامل في الكتب
     const contexts = await vectorStore.search(question, {
-      nResults: 40, // Expanded to search deeper as requested
+      nResults: 15, // Reduced to prevent timeouts
       bookId,
     });
 
@@ -64,7 +64,7 @@ class RAGEngine {
     let extraContexts = [];
     if (altKeywords) {
       extraContexts = await vectorStore.search(altKeywords, {
-        nResults: 20, // Expanded to fetch more synonyms
+        nResults: 10, // Reduced to prevent timeouts
         bookId,
       });
     }
@@ -98,10 +98,15 @@ class RAGEngine {
       };
     }
 
-    // 5. بناء السياق الكامل للنموذج - إرسال كل النتائج بدون اختصار
-    const contextText = allContexts.map((c, i) =>
+    // 5. بناء السياق الكامل للنموذج
+    let contextText = allContexts.map((c, i) =>
       `[مصدر ${i + 1}] الكتاب: ${c.book} | الصفحة: ${c.page}\n${c.text}`
     ).join('\n\n---\n\n');
+
+    // Truncate to prevent token limit/timeout issues
+    if (contextText.length > 30000) {
+      contextText = contextText.substring(0, 30000) + '\n\n[تم اقتطاع باقي النصوص لتجنب تجاوز الحد الأقصى]';
+    }
 
     // 6. بناء قائمة المصادر الفريدة
     const sources = allContexts.map(c => ({
@@ -145,10 +150,8 @@ class RAGEngine {
         ]);
         const retryAnswer = retryResponse.content;
         if (!this.isRefusalAnswer(retryAnswer)) {
-          // تحقق من الإجابة الثانية
-          const verified = await this.verifyAnswer(question, retryAnswer, contextText);
           return {
-            answer: verified,
+            answer: retryAnswer,
             sources: uniqueSources,
             confidence: 'medium',
           };
