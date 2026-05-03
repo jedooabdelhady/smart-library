@@ -209,6 +209,7 @@ router.post('/upload', (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: 'حدث خطأ أثناء معالجة الكتاب: ' + error.message });
   }
+  });
 });
 
 /**
