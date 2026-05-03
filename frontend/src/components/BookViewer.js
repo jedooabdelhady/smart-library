@@ -28,19 +28,24 @@ const BookViewer = ({ book, onClose }) => {
       setCurrentPage(0);
       return;
     }
+    
+    const initialPageNumber = book.initialPage ? Math.max(0, parseInt(book.initialPage, 10) - 1) : 0;
+    
     setLoading(true);
-    setCurrentPage(0);
+    setCurrentPage(initialPageNumber);
+    
     getBookPages(book.id)
       .then(res => {
         if (res.data && res.data.length > 0) {
           setPages(res.data);
+          setCurrentPage(initialPageNumber);
         } else {
           setPages(DEMO_PAGES);
         }
       })
       .catch(() => setPages(DEMO_PAGES))
       .finally(() => setLoading(false));
-  }, [book?.id]);
+  }, [book?.id, book?.initialPage]);
 
   const totalPages = pages.length;
 

@@ -163,7 +163,7 @@ const AdvancedSearch = ({ books, onSelectBook }) => {
                         </div>
                         {book && (
                           <button
-                            onClick={() => onSelectBook(book)}
+                            onClick={() => onSelectBook({ ...book, initialPage: parseInt(result.metadata.pageStart, 10) || 1 })}
                             className="flex items-center gap-1 text-sm text-gold hover:text-navy transition-colors font-bold bg-gold/10 px-3 py-1.5 rounded-lg"
                           >
                             فتح الكتاب
