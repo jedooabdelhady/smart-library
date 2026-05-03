@@ -8,7 +8,7 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState({ totalBooks: 0, totalPages: 0, totalChunks: 0, indexedBooks: 0 });
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStatus, setUploadStatus] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState(null); // 'success' | { error: string }
   const [dragActive, setDragActive] = useState(false);
 
   // Form state
@@ -85,8 +85,9 @@ const AdminDashboard = () => {
     } catch (err) {
       clearInterval(progressInterval);
       setUploadProgress(0);
-      setUploadStatus('error');
-      console.error('Upload error:', err.response?.data?.error || err.message);
+      const errorMessage = err.response?.data?.error || err.message || 'حدث خطأ غير معروف';
+      setUploadStatus({ error: errorMessage });
+      console.error('Upload error:', errorMessage);
     } finally {
       setUploading(false);
       setTimeout(() => setUploadStatus(null), 5000);
@@ -281,14 +282,14 @@ const AdminDashboard = () => {
                 </motion.div>
               )}
 
-              {uploadStatus === 'error' && (
+              {uploadStatus && uploadStatus.error && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-2 text-red-600 bg-red-50 px-4 py-3 rounded-xl text-sm"
+                  className="flex items-center gap-2 text-red-600 bg-red-50 px-4 py-3 rounded-xl text-sm leading-relaxed"
                 >
-                  <FiAlertCircle />
-                  حدث خطأ أثناء الرفع. حاول مرة أخرى.
+                  <FiAlertCircle className="flex-shrink-0" />
+                  <span>{uploadStatus.error}</span>
                 </motion.div>
               )}
 

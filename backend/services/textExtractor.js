@@ -28,7 +28,8 @@ class TextExtractor {
       return { pages, totalPages: pages.length || data.numpages, metadata: data.info };
     } catch (error) {
       console.error('خطأ في استخراج النص من PDF:', error.message);
-      return this.extractWithOCR(filePath);
+      // Fallback for PDF: Tesseract cannot read PDFs directly without conversion
+      return { pages: [], totalPages: 0, metadata: {} };
     }
   }
 

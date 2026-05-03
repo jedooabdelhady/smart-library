@@ -41,7 +41,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
   fileFilter: (req, file, cb) => {
     const allowed = ['.pdf', '.doc', '.docx', '.epub'];
     const ext = path.extname(file.originalname).toLowerCase();
@@ -51,7 +51,7 @@ const upload = multer({
       cb(new Error('نوع الملف غير مدعوم. الأنواع المسموحة: PDF, DOC, DOCX, EPUB'));
     }
   },
-});
+}).single('file');
 
 // Strip Arabic diacritics for search
 const stripDiacritics = (text) => {
@@ -62,9 +62,19 @@ const stripDiacritics = (text) => {
 /**
  * POST /api/admin/upload - رفع ومعالجة كتاب جديد
  */
-router.post('/upload', upload.single('file'), async (req, res) => {
-  try {
-    const { title, author, category } = req.body;
+router.post('/upload', (req, res) => {
+  upload(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'حجم الملف يتجاوز الحد الأقصى المسموح به (100 ميجابايت)' });
+      }
+      return res.status(400).json({ error: 'خطأ في رفع الملف: ' + err.message });
+    } else if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    try {
+      const { title, author, category } = req.body;
     const file = req.file;
 
     if (!file) {
@@ -89,7 +99,9 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     if (!extracted.pages || extracted.pages.length === 0) {
-      return res.status(400).json({ error: 'لم يتم العثور على نص في الملف. تأكد من أن الملف يحتوي على نصوص وليس صوراً فقط.' });
+      // Clean up the uploaded file if extraction fails
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: 'لم يتم العثور على نص في الملف. هذا يعني غالباً أن الكتاب مصور (Scanned PDF) أو به حماية، يرجى رفع نسخة نصية قابلة للقراءة.' });
     }
 
     console.log(`📖 تم استخراج ${extracted.pages.length} صفحة`);
@@ -194,6 +206,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     console.error('❌ خطأ في رفع الكتاب:', error);
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: 'حدث خطأ أثناء معالجة الكتاب: ' + error.message });
   }
 });
