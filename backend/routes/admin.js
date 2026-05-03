@@ -120,16 +120,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     // Step 4: Save pages to database (in batches for performance)
     console.log(`📖 حفظ ${extracted.pages.length} صفحة...`);
     let savedPages = 0;
-    for (const page of extracted.pages) {
-      try {
+    try {
+      const pageBatchSize = 100;
+      for (let i = 0; i < extracted.pages.length; i += pageBatchSize) {
+        const batch = extracted.pages.slice(i, i + pageBatchSize);
+        const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+        const values = [];
+        for (const page of batch) {
+          values.push(bookId, page.number, page.content || '');
+        }
         await pool.execute(
-          'INSERT INTO book_pages (book_id, page_number, content) VALUES (?, ?, ?)',
-          [bookId, page.number, page.content]
+          `INSERT IGNORE INTO book_pages (book_id, page_number, content) VALUES ${placeholders}`,
+          values
         );
-        savedPages++;
-      } catch (e) {
-        // Skip duplicate pages silently
+        savedPages += batch.length;
       }
+    } catch (e) {
+      console.error('❌ خطأ أثناء حفظ الصفحات:', e.message);
     }
     console.log(`✅ تم حفظ ${savedPages} صفحة`);
 
@@ -142,17 +149,24 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     // Step 6: Save chunks to database with content_clean for better search
     console.log(`💾 حفظ ${chunks.length} جزء...`);
     let savedChunks = 0;
-    for (const chunk of chunks) {
-      try {
-        const cleanContent = stripDiacritics(chunk.content);
+    try {
+      const chunkBatchSize = 100;
+      for (let i = 0; i < chunks.length; i += chunkBatchSize) {
+        const batch = chunks.slice(i, i + chunkBatchSize);
+        const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?)').join(',');
+        const values = [];
+        for (const chunk of batch) {
+          const cleanContent = stripDiacritics(chunk.content);
+          values.push(bookId, chunk.index, chunk.content, cleanContent, chunk.pageStart, chunk.pageEnd);
+        }
         await pool.execute(
-          'INSERT INTO text_chunks (book_id, chunk_index, content, content_clean, page_start, page_end) VALUES (?, ?, ?, ?, ?, ?)',
-          [bookId, chunk.index, chunk.content, cleanContent, chunk.pageStart, chunk.pageEnd]
+          `INSERT IGNORE INTO text_chunks (book_id, chunk_index, content, content_clean, page_start, page_end) VALUES ${placeholders}`,
+          values
         );
-        savedChunks++;
-      } catch (e) {
-        // Skip errors silently
+        savedChunks += batch.length;
       }
+    } catch (e) {
+      console.error('❌ خطأ أثناء حفظ الأجزاء:', e.message);
     }
     console.log(`✅ تم حفظ ${savedChunks} جزء`);
 
